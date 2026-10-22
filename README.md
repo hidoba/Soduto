@@ -4,14 +4,14 @@ A macOS KDE Connect client focused on clipboard sync, pairing, connection recove
 and useful diagnostics. This fork combines the upstream `fix/network-reliability`
 and `feat/refine-services` branches, with additional fixes for those connection paths.
 
-**Current release: [3.2.1 (build 29)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+**Current release: [3.2.1 (build 30)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-29-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-29-macos-universal.zip.sha256)
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-30-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-30-macos-universal.zip.sha256)
 · [Release notes](docs/releases/3.2.1.md)
 
-This is an **unsigned, unnotarized pre-release** for **macOS 14 or newer**, with a
-universal **Apple Silicon (`arm64`) and Intel (`x86_64`)** executable. Automated
+This is an **unsigned, unnotarized development release** for **macOS 14 or newer**,
+with a universal **Apple Silicon (`arm64`) and Intel (`x86_64`)** executable. Automated
 checks and the full Release build pass; real-device Ubuntu clipboard, pairing,
 sleep/wake, and Wi-Fi recovery testing remains pending.
 
@@ -47,6 +47,24 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
   including the handoff before the first service packet arrives.
 - Reset old connections after wake and network changes. Connection initialization
   has a **10-second deadline**, with its last phase recorded if it times out.
+
+### Keychain authorization
+
+Build 30 fixes repeated **“export key \<key\>”** password prompts introduced by the
+newer networking stack. All control and payload TLS connections now sign through
+macOS Keychain instead of exporting the private key on every connection. TLS 1.2
+and 1.3 use ephemeral key exchange. New identities receive the readable Keychain
+name **Soduto Device Identity**. New certificates are generated in memory before
+the key is stored as nonexportable. Existing stored keys are never exported.
+
+Existing certificates, keys and pairings are retained. Their old Keychain display
+name can remain `<key>`; updating does not replace the identity or rewrite its
+access controls. An unsigned app replacement can still require a normal Keychain
+access approval. If access is denied, automatic attempts are suspended
+to prevent repeated dialogs. Use **Diagnostics → Reconnect All Devices** to retry
+explicitly, or restart Soduto. Temporary Keychain errors can recover during
+ordinary reconnects after wake or unlock. Keychain signing failures appear in Console and,
+when log writing is enabled, the diagnostic journal. No key material is logged.
 
 ### Connection badge
 
@@ -103,7 +121,7 @@ locations, privacy details, and real-device test checklist.
 
 ## Validation and compatibility
 
-**53 automated checks pass**, alongside a complete Release build of the app and
+**63 automated checks pass**, alongside a complete Release build of the app and
 extensions on macOS 26:
 
 | Checks | Count | Coverage |
@@ -112,18 +130,21 @@ extensions on macOS 26:
 | Clipboard integration scenarios | 13 | Offline copies, reconnect freshness, legacy clients, direction settings, and multi-peer relays |
 | Pairing/transport integration scenarios | 16 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
 | Diagnostic settings scenarios | 6 | Default-off behavior, persistence, concurrent stop, menu placement, UI synchronization, and disabled controls |
-| **Total** | **53** | |
+| Keychain/TLS regression tests | 10 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, reconnects, denial and temporary errors, nonexportable keys and isolated identity storage |
+| **Total** | **63** | |
 
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39863950882)
-· [Built source revision: `5c0254f`](https://github.com/hidoba/Soduto/commit/5c0254f38a44bcdd7f2c87f64956bf4a43e4d006)
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39869897996)
+· [Built source revision: `493ca0c`](https://github.com/hidoba/Soduto/commit/493ca0cf20a7dde3a2c4038d38cec28006006615)
 
-The downloaded archive's checksum, universal executable, version **3.2.1 (29)**,
+The downloaded archive's checksum, universal executable, version **3.2.1 (30)**,
 fork bundle ID, source revision, and update settings were verified. The menu badge
 was also compiled and rendered in light and dark appearances.
 
-The clipboard/pairing scenarios use fake clipboard, transport, certificate storage,
-and windows; diagnostic settings scenarios use isolated preferences and temporary
-journal files. They do not exercise the actual Ubuntu peer. The reported target setup is
+Keychain/TLS tests use real Security and NIOSSL APIs with memory-only keys,
+isolated temporary keychains and loopback sockets. The clipboard/pairing scenarios
+use fake clipboard, transport, certificate storage, and windows; diagnostic settings
+scenarios use isolated preferences and temporary journal files. They do not exercise
+the actual Ubuntu peer. The reported target setup is
 Ubuntu GNOME/Wayland with KDE Connect **25.12.3**. End-to-end compatibility and repeated
 sleep/Wi-Fi recovery with that setup still need real-device validation. GNOME/Wayland
 clipboard integration also depends on the Linux desktop; see the diagnostic guide.
@@ -134,11 +155,11 @@ shared connection lifecycle.
 ## Download and install
 
 1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (29)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+   [release 3.2.1 (30)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
 2. In the directory containing both downloads, verify the archive:
 
    ```sh
-   shasum -a 256 -c Soduto-3.2.1-29-macos-universal.zip.sha256
+   shasum -a 256 -c Soduto-3.2.1-30-macos-universal.zip.sha256
    ```
 
 3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
@@ -179,6 +200,7 @@ swift test
 python3 scripts/test-clipboard-service.py
 python3 scripts/test-pairing-transport.py
 python3 scripts/test-diagnostics-settings.py
+python3 scripts/test-keychain-tls.py
 ```
 
 The [build workflow](.github/workflows/build.yml) contains the complete unsigned
