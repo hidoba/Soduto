@@ -48,6 +48,17 @@ final class DiagnosticLogStore {
 
     func flush() { queue.sync { try? handle?.synchronize() } }
 
+    /// Drain writes and release the file when diagnostic collection is disabled.
+    func close() {
+        queue.sync {
+            do {
+                try handle?.synchronize()
+                try handle?.close()
+            } catch { writeError = error as NSError }
+            handle = nil
+        }
+    }
+
     var lastError: NSError? { queue.sync { writeError } }
 
     /// Snapshot on the writer queue, so export and rotation cannot race.
@@ -133,7 +144,8 @@ enum DiagnosticBundleExporter {
         Files are newest first: events.jsonl, events.1.jsonl, etc. Sessions survive restarts.
         Device aliases change each launch. No clipboard/message bodies, paths, addresses or keys are recorded.
         summary.json describes app, network and device state at export time.
-        The journal retains up to four 5 MiB files. Detailed packet logging is on by default.
+        Log writing is opt-in. The journal retains up to four 5 MiB files.
+        summary.json records the log-writing and packet-tracing settings at export time.
         System Console logs are excluded: inherited debug statements may contain personal data.
         """.write(to: bundle.appendingPathComponent("README.txt"), atomically: true, encoding: .utf8)
         let archive = temporary.appendingPathComponent("diagnostics.zip")

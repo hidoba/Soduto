@@ -31,6 +31,8 @@ jobs:
         run: python3 scripts/test-clipboard-service.py
       - name: Pairing and transport integration regression tests
         run: python3 scripts/test-pairing-transport.py
+      - name: Diagnostic settings and logging regression tests
+        run: python3 scripts/test-diagnostics-settings.py
       - name: Build application and extensions
         run: |
           set -euo pipefail

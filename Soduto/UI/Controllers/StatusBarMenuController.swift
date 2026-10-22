@@ -191,6 +191,7 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
         
         if menu == self.statusBarMenu {
             updateConnectionCount()
+            Diagnostics.shared.updateMenuState()
             self.dashboardMenuItem?.isEnabled = !(deviceDataSource?.pairedDevices.isEmpty ?? true) || !(deviceDataSource?.unavailableDevices.isEmpty ?? true)
             self.refreshMenuDeviceList()
             if #available(macOS 13.0, *) {
@@ -214,6 +215,11 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     
     
     // MARK: Public methods
+
+    func installDiagnosticsMenu(_ item: NSMenuItem) {
+        let index = statusBarMenu.items.firstIndex { $0.action == #selector(quit(_:)) } ?? statusBarMenu.numberOfItems
+        statusBarMenu.insertItem(item, at: index)
+    }
     
     func refreshDeviceLists() {
         updateConnectionCount()
