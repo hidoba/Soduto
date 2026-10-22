@@ -122,7 +122,7 @@ The pairing/transport harness runs the production pairing handler, device,
 device manager, service dispatch and extracted connection event callbacks with
 fake transport, certificates and UI. It covers protocol 7/8, verification hashes,
 invalid and expired requests, explicit re-pair approval, duplicate accepts,
-missing certificates, interrupted requests, callback ordering, capability refresh
+missing certificates, interrupted requests, stale verification prompts, callback ordering, capability refresh
 and stale clipboard queues. Both harnesses avoid the real clipboard and keychain.
 
 GitHub Actions also builds the entire Release app and extensions on macOS 26.

@@ -174,6 +174,8 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
         
         // Update pairing window based on status
         DispatchQueue.main.async {
+            // A newer request can start before this queued UI update runs.
+            guard device.pairingStatus == status else { return }
             switch status {
             case .Paired:
                 PairingInterfaceController.updatePairingUI(for: device.id, success: true)
@@ -202,6 +204,7 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
         Logger.device.debug("device(<\(String(describing: device), privacy: .public)> pairingFailed:<\(error, privacy: .public)>)")
         
         DispatchQueue.main.async {
+            guard device.pairingStatus == .Unpaired else { return }
             guard PairingWindowController.isActive(for: device.id) else { return }
             
             if let pairingError = error as? DefaultPairingHandler.Error,

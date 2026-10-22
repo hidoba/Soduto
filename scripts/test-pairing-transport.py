@@ -185,14 +185,14 @@ public protocol ConnectionProviderDelegate: AnyObject {
 public final class ConnectionProvider {}
 extension FakeConfiguration: DeviceManagerConfiguration {}
 func CACurrentMediaTime() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
-enum PairingState { case outgoingRequest, incomingRequest, failed, timeout }
+enum PairingState { case outgoingRequest, incomingRequest, success, failed, timeout }
 enum PairingWindowController {
-    static func isActive(for id: String) -> Bool { false }
-    static func state(for id: String) -> PairingState? { nil }
-    static func updateState(for id: String, state: PairingState) {}
-}
-enum PairingInterfaceController {
-    static func updatePairingUI(for deviceId: String, success: Bool) {}
+    static var windows: [String: PairingState] = [:]
+    static func isActive(for id: String) -> Bool { windows[id] != nil }
+    static func state(for id: String) -> PairingState? { windows[id] }
+    static func updateState(for id: String, state: PairingState) { if isActive(for: id) { windows[id] = state } }
+    static func showIncomingRequest(for device: Device) { windows[device.id] = .incomingRequest }
+    static func close(for id: String) { windows.removeValue(forKey: id) }
 }
 final class ClipboardProbe: Service {
     static let serviceId = "synthetic.clipboard"
@@ -408,6 +408,29 @@ precondition(competing.state == .Closed && retainedDevice.pairingStatus == .Requ
 deviceManager.closeAllConnections()
 precondition(deviceManager.pairedRechableDevices.isEmpty)
 print("PASS: competing connections cannot replace an active pairing prompt")
+
+let uiConfig = DeviceConfiguration()
+uiConfig.isPaired = true; uiConfig.certificate = Data([2])
+let uiManager = DeviceManager(config: FakeConfiguration(uiConfig), serviceManager: ServiceManager())
+let uiConnection = Connection(config: uiConfig)
+uiManager.connectionProvider(provider, didCreateConnection: uiConnection)
+let uiDevice = uiManager.device(withId: "synthetic-peer")!
+// Queue the previous request's success, then begin a new one before the queue drains.
+uiManager.device(uiDevice, didChangePairingStatus: .Paired)
+uiDevice.unpair()
+uiDevice.requestPairing()
+PairingWindowController.windows[uiDevice.id] = .outgoingRequest
+spin()
+precondition(PairingWindowController.state(for: uiDevice.id) == .outgoingRequest,
+             "An old pairing result overwrote a new verification prompt")
+print("PASS: delayed pairing results cannot overwrite a newer verification prompt")
+
+uiConnection.close()
+PairingWindowController.close(for: uiDevice.id)
+PairingInterfaceController.showPairingWindow(for: uiDevice)
+spin()
+precondition(!PairingWindowController.isActive(for: uiDevice.id), "An interrupted request reopened a stale prompt")
+print("PASS: interrupted pairing cannot reopen an obsolete incoming prompt")
 '''
 # Independent known-answer check for the production verification hash function.
 expected = hashlib.sha256(bytes([2, 1]) + b'1700000000').hexdigest()[:8].upper()
@@ -420,7 +443,8 @@ with tempfile.TemporaryDirectory(prefix='soduto-pairing-tests-') as directory:
                       (root / 'Soduto/Core/ServiceManager.swift').read_text() +
                       (root / 'Soduto/Core/DeviceManager.swift').read_text().replace('import os', '').replace('import QuartzCore', '') +
                       (root / 'Soduto/Core/Pairable.swift').read_text() +
-                      (root / 'Soduto/Core/DefaultPairingHandler.swift').read_text() + tests)
+                      (root / 'Soduto/Core/DefaultPairingHandler.swift').read_text() +
+                      (root / 'Soduto/UI/Controllers/PairingInterfaceController.swift').read_text() + tests)
     executable = directory / 'pairing-tests'
     subprocess.run(['swiftc', str(source), '-o', str(executable)], check=True)
     subprocess.run([str(executable)], check=True)
