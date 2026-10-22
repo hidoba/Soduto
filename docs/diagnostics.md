@@ -91,6 +91,8 @@ Connect packets remain live edits without depending on their sender's clock.
 Identical text never clears the pasteboard, preserving its other representations.
 On reconnect, obsolete queued clipboard sends are discarded and the current
 pasteboard is synchronized instead.
+Superseded sockets can finish existing payload uploads but cannot apply delayed
+clipboard updates or unpair the replacement session.
 
 Error records contain error domain, numeric code, Swift type and associated enum
 case label rather than arbitrary error

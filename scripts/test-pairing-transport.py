@@ -129,6 +129,7 @@ public final class Connection: PairingHandlerDelegate, Equatable {
     var events: [String] = []
     var unsent: [(dataPacket: DataPacket, completionHandler: SendingCompletionHandler?)] = []
     var hasActiveUploadTasks = false
+    var isRetiring = false
     let diagnosticID = "synthetic-connection"
     let peerAddress = "synthetic-address"
     var verificationCode: String? { pairingHandler?.verificationCode }
@@ -147,7 +148,7 @@ public final class Connection: PairingHandlerDelegate, Equatable {
     }
     func cancelUpload(forPacketId: Int64) {}
     func sendKeepAlivePacket() {}
-    func closeAfterWriting() { close() }
+    func closeAfterWriting() { isRetiring = true; close() }
     init(config: DeviceConfiguration = DeviceConfiguration(), version: UInt = 8) {
         self.config = FakeConfiguration(config)
         self.state = .Open
@@ -261,6 +262,12 @@ precondition(incoming.sent.count == replyCount, "Re-pair request was accepted au
 incoming.acceptPairing()
 precondition(incoming.pairingStatus == .Paired)
 print("PASS: fresh re-pair requests require approval and stale requests preserve the existing pin")
+incoming.isRetiring = true
+let retiringPin = incoming.config.device.certificate
+incoming.handlePairingPacket(.unpairPacket())
+precondition(incoming.config.device.certificate == retiringPin && incoming.pairingStatus == .Paired)
+incoming.isRetiring = false
+print("PASS: a superseded socket cannot clear the active session's pairing pin")
 
 
 let outgoing = Connection()
@@ -385,6 +392,8 @@ deviceManager.connectionProvider(provider, didCreateConnection: afterPluginEnabl
 precondition(deviceManager.device(withId: "synthetic-peer") === retainedDevice)
 retainedDevice.connection(afterPluginEnable, didReadPacket: DataPacket(type: "kdeconnect.clipboard", body: [:]))
 precondition(clipboardProbe.handled == 1, "Cached device lost its newly enabled clipboard handler")
+retainedDevice.connection(beforePluginEnable, didReadPacket: DataPacket(type: "kdeconnect.clipboard", body: [:]))
+precondition(clipboardProbe.handled == 1, "Obsolete socket applied a stale clipboard packet")
 print("PASS: enabling clipboard across a brief reconnect rebuilds cached device dispatch")
 
 retainedDevice.unpair()

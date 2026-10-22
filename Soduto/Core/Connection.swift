@@ -95,6 +95,10 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
 
     func recordDiagnostic(_ event: String, level: DiagnosticEvent.Level = .info, error: Error? = nil) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.recordDiagnostic(event, level: level, error: error) }
+            return
+        }
         var fields = diagnosticFields
         if let error { fields.merge(Diagnostics.errorFields(error)) { _, new in new } }
         fields["elapsed_ms"] = String(Int(Date().timeIntervalSince(diagnosticStartedAt) * 1000))
@@ -174,6 +178,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     
     /// If true, connection will close after all pending uploads complete.
     private var shouldCloseAfterUploads: Bool = false
+    private var isRetiring = false
     
     // MARK: Initialization / Deinitialization
     
@@ -408,6 +413,9 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     public func closeAfterWriting() {
+        // A replacement owns the device now. The old socket may finish uploads,
+        // but must not apply delayed clipboard/unpair packets to the new session.
+        isRetiring = true
         if self.hasActiveUploadTasks {
             // Don't close yet - set flag to close after uploads complete
             Logger.network.debug("Connection: deferring close until uploads complete")
@@ -858,7 +866,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     private func handle(packet: DataPacket) {
-        guard state != .Closed else { return }
+        guard state != .Closed, !isRetiring else { return }
         #if DEBUG
             Logger.network.debug("handle(packet: <\(packet, privacy: .public)>) [\(self, privacy: .public)]")
         #else
@@ -940,7 +948,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     ///
     /// This replaces DefaultPairingHandler.handleDataPacket for Connection.
     private func handlePairingPacket(_ packet: DataPacket) {
-        guard let pairingHandler = self.pairingHandler else { return }
+        guard !isRetiring, let pairingHandler = self.pairingHandler else { return }
         
         do {
             let pairFlag = try packet.getPairFlag()
@@ -1212,14 +1220,14 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     private func finalizeSending(packet: DataPacket, completionHandler: SendingCompletionHandler?, packetSent: Bool, payloadSent: Bool) {
-        if !packetSent || packet.hasPayload() {
-            var fields = diagnosticFields
-            fields["packet_type"] = packet.type
-            fields["packet_id"] = String(packet.id)
-            fields["result"] = packet.hasPayload() ? String(packetSent && payloadSent) : String(packetSent)
-            Diagnostics.record("packet.send_completed", level: packetSent ? .info : .warning, fields: fields)
-        }
         DispatchQueue.main.async { [weak self] in
+            if let self, !packetSent || packet.hasPayload() {
+                var fields = self.diagnosticFields
+                fields["packet_type"] = packet.type
+                fields["packet_id"] = String(packet.id)
+                fields["result"] = packet.hasPayload() ? String(packetSent && payloadSent) : String(packetSent)
+                Diagnostics.record("packet.send_completed", level: packetSent ? .info : .warning, fields: fields)
+            }
             completionHandler?(packetSent, payloadSent)
             if packetSent, let self = self {
                 self.delegate?.connection(self, didSendPacket: packet, uploadedPayload: payloadSent)
@@ -1229,6 +1237,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     
     /// Sends a keepalive packet.
     public func sendKeepAlivePacket() {
+        guard !isRetiring else { return }
         let packet = DataPacket(type: "soduto.keepalive", body: [:])
         _ = send(packet)
     }

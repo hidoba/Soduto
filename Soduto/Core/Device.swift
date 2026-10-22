@@ -338,6 +338,7 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
     }
     
     public func connection(_ connection: Connection, didReadPacket packet: DataPacket) {
+        guard connection.state == .Open, connections.contains(where: { $0 === connection }) else { return }
         self.handle(packet: packet, onConnection: connection)
     }
     
