@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="Soduto/Assets.xcassets/AppIcon.appiconset/1024.png" alt="Soduto Logo" width="200"/>
+  <img src="Soduto/App Icons/Soduto.png" alt="Soduto Logo" width="200"/>
   <h1 style="font-weight: 700; font-size: 4em; margin: 0; padding-top: 0;">Soduto</h1>
   <div style="margin-bottom: 1em">
-  <a href="https://github.com/sannidhyaroy/soduto/blob/nightly/LICENSE"><img src="https://img.shields.io/github/license/sannidhyaroy/soduto.svg?color=B0BB88&style=flat-square" alt="GNU Licensed"></a>
-  <a href="https://github.com/sannidhyaroy/soduto/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/sannidhyaroy/soduto?color=B0BB88&style=flat-square"></a>
-  <a href="https://github.com/sannidhyaroy/soduto/commits/nightly"><img src="https://img.shields.io/github/last-commit/sannidhyaroy/soduto/nightly?color=B0BB88&style=flat-square" alt="Last Commit"></a>
-  <a href="https://github.com/sannidhyaroy/soduto/releases/latest"><img alt="GitHub Release Date" src="https://img.shields.io/github/release-date/sannidhyaroy/soduto?color=B0BB88&style=flat-square"></a>
-  <a href="https://github.com/sannidhyaroy/soduto/releases"><img alt="GitHub Release Downloads" src="https://img.shields.io/github/downloads/sannidhyaroy/soduto/total?color=B0BB88&style=flat-square"></a>
+  <a href="https://github.com/sannidhyaroy/soduto/blob/nightly/LICENSE"><img alt="GPL Licensed" src="https://img.shields.io/github/license/sannidhyaroy/soduto?style=flat-square&logo=spdx&logoColor=white&color=B0BB88"></a>
+  <a href="https://github.com/sannidhyaroy/soduto/commits/nightly"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/sannidhyaroy/soduto?style=flat-square&logo=sourcetree&logoColor=white&color=B0BB88"></a>
+  <a href="https://github.com/sannidhyaroy/soduto/releases/latest"><img alt="GitHub Release Date" src="https://img.shields.io/github/release-date/sannidhyaroy/soduto?style=flat-square&logo=docsdotrs&logoColor=white&color=B0BB88"></a>
+  <a href="https://github.com/sannidhyaroy/soduto/releases"><img alt="GitHub Release Downloads" src="https://img.shields.io/github/downloads/sannidhyaroy/soduto/total?style=flat-square&logo=icloud&logoColor=white&color=B0BB88"></a>
+  <a href="https://discord.gg/CEWxVVNHAe"><img alt="Soduto Labs Discord Server" src="https://img.shields.io/discord/1475760167197868123?style=flat-square&logo=discord&logoColor=white&label=Soduto%20Labs&color=B0BB88"></a>
   </div>
   <p>
   Soduto is a KDE Connect compatible application for macOS. It allows better integration between your phones, desktops and tablets. For more information take a look at <a href="https://www.soduto.com">soduto.com</a>
@@ -16,7 +16,10 @@
 ---
 ## **Navigation**
 - [Installation](#installation)
-- [Features](#features)
+- [Roadmap](#roadmap)
+  - [Protocol Coverage](#protocol-coverage)
+  - [Quality of Life](#quality-of-life)
+  - [Beyond the Protocol](#beyond-the-protocol)
 - [Building](#building)
 - [Debugging](#debugging)
 - [Verifying Downloads](#verifying-downloads)
@@ -51,75 +54,92 @@ The official build of Soduto can be downloaded from [soduto.com](https://www.sod
 Please note that currently there's no brew cask for Soduto builds of this repository and the only source is the [Releases Page](https://github.com/sannidhyaroy/soduto/releases/latest) of this repository. Installation is a one-time process, and future upgrades are handled in-app using [Sparkle](https://sparkle-project.org/).
 
 ---
-## Features
+## Roadmap
+
+### Protocol Coverage
 
 Soduto implements the following KDE Connect plugin features (compatible with any KDE Connect device):
 
-### Notifications
-- [x] Receive: Mirror remote device notifications on macOS (with automatic OTP copying)
+#### Notifications
+- [x] Receive: Mirror remote device notifications on macOS
 - [ ] Send: Send macOS notifications to remote devices
 
-### Clipboard
+#### Clipboard
 - [x] Receive: Receive clipboard content from remote devices
 - [x] Send: Send macOS clipboard content to remote devices
 
-### File Sharing
+#### File Sharing
 - [x] Receive: Receive shared files, links, and text from remote devices (files are saved in the Downloads folder)
 - [x] Send: Share files, links, and text to remote devices via Share extension, drag and drop to menu bar, or `Send Files` option
 - [x] Browse storage: Access remote device filesystem via SFTP
 
-### Battery Status
+#### Battery Status
 - [x] Receive: View remote device battery level and charging status
 - [x] Send: Send macOS battery status to remote devices
 
-### Media Control (MPRIS)
+#### Media Control (MPRIS)
 - [x] Receive: Control remote device music/video playback from Dashboard or macOS Now Playing Module
 - [x] Send: Control macOS music/video playback from remote devices (experimental due to Apple's Private API)
 
-### System Volume
+#### System Volume
 - [x] Receive: View and Control audio streams on remote device from Mac
 - [x] Send: View and Control audio streams on Mac from remote device
 
-### Telephony
+#### Telephony
 - [x] Receive: View incoming call and SMS notifications from remote devices
 
-### SMS Window
-- [ ] Receive: View SMS of remote devices
+#### SMS Window
+- [x] Receive: View SMS of remote devices
 - [x] Send: Send SMS from macOS
 
-### Remote Input
+#### Remote Input
 - [x] Receive: Use remote device as keyboard and touchpad for macOS
 - [x] Send: Use macOS to control remote device input (experimental)
 
-### Ping
+#### Ping
 - [x] Receive: Receive ping messages from remote devices
 - [x] Send: Send ping messages to remote devices
 
-### Run Commands
+#### Run Commands
 - [x] Receive: Execute macOS commands from remote devices
 - [x] Send: Execute predefined commands on remote devices
 
-### Find My Device
+#### Find My Device
 - [x] Receive: Make macOS play an alarm sound to locate it
 - [x] Send: Make remote device play an alarm sound to locate it
 
-### Connectivity Report
+#### Lock
+- [x] Receive: View remote device lock status, and lock/unlock this Mac remotely (unlock won't succeed if the remote device is Android or macOS, since neither OS exposes an unlock API)
+- [x] Send: Report macOS lock status to remote devices, and lock/unlock the remote device (same unlock caveat applies)
+
+#### Connectivity Report
 - [x] Receive: Monitor remote device network connectivity status
 
-### Presentation Remote
+#### Presentation Remote
 - [x] Receive: Use remote device as presentation remote for macOS
 
-### Contacts
+#### Contacts
 - [x] Receive: Synchronize contacts between macOS and remote devices
 
-### Digitizer
-- [ ] Receive: Use remote device as pressure-sensitive drawing tablets
+#### Digitizer
+- [x] Receive: Use remote device as pressure-sensitive drawing tablets
 
-### System Integration
-- [ ] Screensaver Inhibit: Prevent macOS screensaver when device is connected
-- [ ] Call Pause: Automatically pause macOS media during device calls
+### Quality of Life
 
-For the complete list of KDE Connect features and documentation, visit the [official KDE Connect Wiki](https://userbase.kde.org/KDEConnect).
+- [x] Call Pause: Automatically pause macOS media during device calls
+- [x] Soduto Share: Share files, links, and text to remote devices straight from the native macOS Share Sheet in any app
+- [x] OTP Extraction: One-tap copy action on every notification's extracted OTP, plus automatic clipboard copy for live notifications (skipped during the initial sync catch-up)
+- [ ] Shortcuts App Integration: Expose Soduto actions as native Shortcuts app intents for custom automations
+- [ ] CLI Tool: A companion command-line tool for scripting and headless device actions
+- [ ] Proximity Media: Automatically pause Mac media when you step away from your desk with your phone still on the same network, and resume when you're back
+- [ ] Proximity Lock: Automatically lock your Mac when you step away from your desk with your phone still on the same network
+- [ ] Lock on Disconnect: Lock your Mac automatically if your phone fully disconnects from the network (opt-in, with a warning that it can trigger even while you're still at your desk, e.g. if you turn off your phone's WiFi on purpose)
+- [ ] Native Menubar Widgets: Desktop widgets for at-a-glance device status
+- [ ] Shake to Send: Copy a file (or share it via the Share Extension or menu bar drag) on the Mac, then shake the target phone within a few seconds to send it there instantly, an alternative to picking a device from a list
+
+### Beyond the Protocol (both devices require Soduto sibling clients)
+
+- [x] Webcam (experimental): Stream live video from a remote device's camera to macOS and use it as webcam
 
 ---
 ## Building
@@ -430,6 +450,9 @@ For comprehensive information about KDE Connect features, limitations, configura
 
 ---
 ## Get in touch
+
+For real-time chat, testing nightly builds, and shaping where Soduto goes, join [Soduto Labs](https://discord.gg/CEWxVVNHAe).
+
 To ask a question, offer suggestions or share an idea, please use the [discussions tab](https://github.com/sannidhyaroy/soduto/discussions) of this repository.
 
 If you spot any bugs or vulnerabilities, please [create an issue](https://github.com/sannidhyaroy/soduto/issues/). It's always a good idea to make sure there aren't any similar issues open, before creating a new one!
