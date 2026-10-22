@@ -37,8 +37,8 @@ final class KeychainTLSPrivateKey: NIOSSLCustomPrivateKey, Hashable, @unchecked 
     // Keychain can present a dialog. Never block a NIO event loop or the UI thread.
     // Serializing also prevents simultaneous reconnects from presenting many dialogs.
     private static let worker = DispatchQueue(label: "com.hidoba.Soduto.keychain-signing")
-    // Accessed only on worker. A failed local signing operation stays suspended
-    // until an explicit retry, rather than prompting again on every discovery packet.
+    // Accessed only on worker. Denied access stays suspended until an explicit
+    // retry. Temporary Keychain errors must remain recoverable after wake/unlock.
     private static var failures: [Data: NSError] = [:]
     private let key: SecKey
     private let identityID: Data
@@ -109,14 +109,29 @@ final class KeychainTLSPrivateKey: NIOSSLCustomPrivateKey, Hashable, @unchecked 
                 promise.succeed(buffer)
             } catch {
                 let failure = error as NSError
-                Self.failures[identityID] = failure
-                Diagnostics.record("keychain.signing_suspended", level: .error,
+                let denied = Self.isAccessDenied(failure)
+                if denied { Self.failures[identityID] = failure }
+                Diagnostics.record(denied ? "keychain.signing_suspended" : "keychain.signing_failed", level: .error,
                                    fields: ["error_domain": failure.domain, "error_code": String(failure.code)])
-                Logger.config.error("Keychain signing failed (\(failure.code)); use Reconnect All Devices to retry access.")
+                if denied {
+                    Logger.config.error("Keychain access denied (\(failure.code)); use Reconnect All Devices to retry access.")
+                } else {
+                    Logger.config.error("Keychain signing failed (\(failure.code)); a later connection can retry.")
+                }
                 promise.fail(failure)
             }
         }
         return promise.futureResult
+    }
+
+    private static func isAccessDenied(_ error: NSError) -> Bool {
+        let deniedCodes = [Int(errSecUserCanceled), Int(errSecAuthFailed), Int(CSSMERR_CSP_OPERATION_AUTH_DENIED)]
+        if error.domain == NSOSStatusErrorDomain, deniedCodes.contains(error.code) { return true }
+        // Security sometimes wraps a legacy Keychain status in an underlying error.
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return underlying.domain == NSOSStatusErrorDomain && deniedCodes.contains(underlying.code)
+        }
+        return false
     }
 
     func decrypt(channel: Channel, data: ByteBuffer) -> EventLoopFuture<ByteBuffer> {

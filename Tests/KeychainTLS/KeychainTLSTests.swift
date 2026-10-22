@@ -143,6 +143,33 @@ final class KeychainTLSTests: XCTestCase {
         }
     }
 
+    func testTemporaryKeychainFailureCanRecoverWithoutExplicitRetry() throws {
+        let key = try memoryKey()
+        let attempts = Counter()
+        let signer = KeychainTLSPrivateKey(key: key, identityID: Data(UUID().uuidString.utf8)) { algorithm, data in
+            attempts.increment()
+            if attempts.value == 1 {
+                throw NSError(domain: NSOSStatusErrorDomain, code: Int(errSecNotAvailable))
+            }
+            var error: Unmanaged<CFError>?
+            guard let result = SecKeyCreateSignature(key, algorithm, data as CFData, &error) else {
+                throw error!.takeRetainedValue() as Error
+            }
+            return result as Data
+        }
+        try withChannel { channel in
+            var message = channel.allocator.buffer(capacity: 20)
+            message.writeString("synthetic wake retry")
+            XCTAssertThrowsError(try signer.sign(channel: channel, algorithm: .rsaPssRsaeSha256, data: message).wait())
+            let signature = try signer.sign(channel: channel, algorithm: .rsaPssRsaeSha256, data: message).wait()
+            XCTAssertEqual(attempts.value, 2)
+            var error: Unmanaged<CFError>?
+            XCTAssertTrue(SecKeyVerifySignature(try XCTUnwrap(SecKeyCopyPublicKey(key)), .rsaSignatureMessagePSSSHA256,
+                                                Data(message.readableBytesView) as CFData,
+                                                Data(signature.readableBytesView) as CFData, &error))
+        }
+    }
+
     func testUnsupportedAlgorithmsFailWithoutUsingKeychain() throws {
         let attempts = Counter()
         let signer = KeychainTLSPrivateKey(key: try memoryKey(), identityID: Data(UUID().uuidString.utf8)) { _, _ in
