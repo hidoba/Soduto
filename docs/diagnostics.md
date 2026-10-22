@@ -3,7 +3,7 @@
 This fork combines `fix/network-reliability` (`ca7db3a`) and
 `feat/refine-services` (`afcc62d`) from sannidhyaroy/Soduto. It adds recovery
 fixes and a persistent, bounded diagnostic journal. The app uses bundle ID
-`com.hidoba.Soduto` and version 3.2.1 (28). Pair this fork as a new Mac device.
+`com.hidoba.Soduto` and version 3.2.1 (29). Pair this fork as a new Mac device.
 
 The menu bar icon has a small badge over its upper-right corner showing the number
 of paired, reachable devices, or `×` when none are connected. Counts above 99 show
@@ -12,13 +12,23 @@ after sleep or network recovery. Hover for the full connection count.
 
 ## Capture a failure
 
-1. Reproduce the failure with one Mac client running. On GNOME/Wayland, use
+1. Enable **Write diagnostic logs** in **Preferences → Diagnostics**, or in the
+   **Diagnostics** menu directly above **Quit**. It is off by default, including
+   when upgrading from builds that only had the packet-tracing setting.
+2. Reproduce the failure with one Mac client running. On GNOME/Wayland, use
    GSConnect v74 or newer, with the separate KDE Connect daemon stopped.
-2. Note the time, direction (Mac → Ubuntu or Ubuntu → Mac), and what failed:
+3. Note the time, direction (Mac → Ubuntu or Ubuntu → Mac), and what failed:
    fresh text clipboard, file transfer, discovery, pairing, or all traffic.
-3. In Soduto's menu, select **Diagnostics → Export Diagnostic Bundle…**.
-4. After exporting, **Diagnostics → Reconnect All Devices** can recover the
-   session without restarting the app. Capture before recovering when possible.
+4. Select **Diagnostics → Export Diagnostic Bundle…** before choosing
+   **Reconnect All Devices**. Reconnect can recover the session without restarting.
+5. Turn **Write diagnostic logs** off when the capture is finished. Turning it off
+   drains queued writes, closes the journal and stops further collection. It keeps
+   existing logs; enable writing again to export them. The choice is remembered.
+
+Settings and the menu toggle stay synchronized. Export, Open Diagnostic Logs and
+Detailed Packet Logging are disabled while writing is off. Reconnect All Devices
+remains available. No diagnostic journal is created or appended automatically
+while writing is off. Ordinary macOS Console logging is separate.
 
 The ZIP contains the journal and a `summary.json` snapshot. It does not contain
 clipboard text, notifications, filenames, file contents, IP/MAC addresses,
@@ -32,7 +42,7 @@ JSON and contains wall-clock time, monotonic uptime, session, severity, event
 name, and metadata. Partial records left by a crash are trimmed on next open.
 Files are private to the user (0600, directory 0700).
 
-**Detailed Packet Logging** is on by default. Turn it off to retain a longer
+**Detailed Packet Logging** defaults on **only after Write diagnostic logs is enabled**. Turn it off to retain a longer
 window of lifecycle events when packet traffic is high. It logs packet metadata
 and service dispatch results, never the packet body. No logs are uploaded.
 
@@ -113,6 +123,7 @@ timeout; compare the peer's logs at the same time.
 swift test
 python3 scripts/test-clipboard-service.py
 python3 scripts/test-pairing-transport.py
+python3 scripts/test-diagnostics-settings.py
 ```
 
 The Swift package tests clipboard timestamp state, port validation, restart
@@ -128,7 +139,10 @@ device manager, service dispatch and extracted connection event callbacks with
 fake transport, certificates and UI. It covers protocol 7/8, verification hashes,
 invalid and expired requests, explicit re-pair approval, duplicate accepts,
 missing certificates, interrupted requests, stale verification prompts, callback ordering, capability refresh
-and stale clipboard queues. Both harnesses avoid the real clipboard and keychain.
+and stale clipboard queues. Both harnesses avoid the real clipboard and keychain. The diagnostic settings
+harness uses isolated preferences and temporary journals to check default-off
+behavior, privacy, concurrent stop, persistence, menu order, UI synchronization and
+disabled actions. It does not change the actual app settings or journal.
 
 GitHub Actions also builds the entire Release app and extensions on macOS 26.
 It uploads an **unsigned** app ZIP and checksum for review; this is not a

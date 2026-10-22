@@ -4,10 +4,10 @@ A macOS KDE Connect client focused on clipboard sync, pairing, connection recove
 and useful diagnostics. This fork combines the upstream `fix/network-reliability`
 and `feat/refine-services` branches, with additional fixes for those connection paths.
 
-**Current release: [3.2.1 (build 28)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+**Current release: [3.2.1 (build 29)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-28-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-28-macos-universal.zip.sha256)
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-29-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-29-macos-universal.zip.sha256)
 · [Release notes](docs/releases/3.2.1.md)
 
 This is an **unsigned, unnotarized pre-release** for **macOS 14 or newer**, with a
@@ -70,6 +70,20 @@ AppKit using the actual badge drawing code.
 
 ### Persistent diagnostics
 
+**Write diagnostic logs is off by default.** Enable it in
+**Preferences → Diagnostics → Write diagnostic logs** or the
+**Diagnostics → Write diagnostic logs** menu item. Both controls share the same
+saved setting. No diagnostic journal is created or appended automatically while
+the setting is off. Turning it off drains pending writes and closes the log file;
+existing logs are kept. Your choice is remembered across launches.
+
+The **Diagnostics** menu sits directly **above Quit**. Export, open-log-folder and
+detailed-packet-logging actions are disabled while writing is off; **Reconnect
+All Devices** stays available. To export older logs, enable writing again first.
+Ordinary macOS Console logging is separate from this diagnostic journal.
+
+![Diagnostic log-writing setting](docs/images/diagnostics-settings.png)
+
 The **Diagnostics** menu provides **Export Diagnostic Bundle…**, **Open Diagnostic
 Logs**, **Detailed Packet Logging**, and **Reconnect All Devices**.
 
@@ -82,13 +96,14 @@ Logs**, **Detailed Packet Logging**, and **Reconnect All Devices**.
   file contents, IP/MAC addresses, certificates, and private keys. Clipboard replay
   fingerprints stay in bounded memory and are never logged. No logs are uploaded.
 
-When something fails, export a bundle **before** using **Reconnect All Devices**.
+To capture a problem, enable log writing, reproduce the issue, and export a bundle
+**before** using **Reconnect All Devices**. You can then turn log writing off again.
 See [diagnostics and testing](docs/diagnostics.md) for the event guide, storage
 locations, privacy details, and real-device test checklist.
 
 ## Validation and compatibility
 
-**47 automated checks pass**, alongside a complete Release build of the app and
+**53 automated checks pass**, alongside a complete Release build of the app and
 extensions on macOS 26:
 
 | Checks | Count | Coverage |
@@ -96,17 +111,19 @@ extensions on macOS 26:
 | Native reliability tests | 18 | Clipboard state, recovery policy, journal privacy, persistence, rotation, and ZIP export |
 | Clipboard integration scenarios | 13 | Offline copies, reconnect freshness, legacy clients, direction settings, and multi-peer relays |
 | Pairing/transport integration scenarios | 16 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
-| **Total** | **47** | |
+| Diagnostic settings scenarios | 6 | Default-off behavior, persistence, concurrent stop, menu placement, UI synchronization, and disabled controls |
+| **Total** | **53** | |
 
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39859010761)
-· [Built source revision: `da83ebc`](https://github.com/hidoba/Soduto/commit/da83ebc902b680c6191adf0a8b8591dd07f08341)
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39863950882)
+· [Built source revision: `5c0254f`](https://github.com/hidoba/Soduto/commit/5c0254f38a44bcdd7f2c87f64956bf4a43e4d006)
 
-The downloaded archive's checksum, universal executable, version **3.2.1 (28)**,
+The downloaded archive's checksum, universal executable, version **3.2.1 (29)**,
 fork bundle ID, source revision, and update settings were verified. The menu badge
 was also compiled and rendered in light and dark appearances.
 
-The integration scenarios use fake clipboard, transport, certificate storage, and
-windows; they do not exercise the actual Ubuntu peer. The reported target setup is
+The clipboard/pairing scenarios use fake clipboard, transport, certificate storage,
+and windows; diagnostic settings scenarios use isolated preferences and temporary
+journal files. They do not exercise the actual Ubuntu peer. The reported target setup is
 Ubuntu GNOME/Wayland with KDE Connect **25.12.3**. End-to-end compatibility and repeated
 sleep/Wi-Fi recovery with that setup still need real-device validation. GNOME/Wayland
 clipboard integration also depends on the Linux desktop; see the diagnostic guide.
@@ -117,18 +134,19 @@ shared connection lifecycle.
 ## Download and install
 
 1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (28)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+   [release 3.2.1 (29)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
 2. In the directory containing both downloads, verify the archive:
 
    ```sh
-   shasum -a 256 -c Soduto-3.2.1-28-macos-universal.zip.sha256
+   shasum -a 256 -c Soduto-3.2.1-29-macos-universal.zip.sha256
    ```
 
 3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
    unsigned and not notarized; macOS may block it. For a development-signed build,
    use Xcode with your own Apple Developer team as described below.
-4. Quit other Mac KDE Connect/Soduto clients before testing, then pair this fork
-   as a new Mac device.
+4. Quit the running copy and other Mac KDE Connect/Soduto clients before updating
+   or testing. A first install of this fork pairs as a new Mac device; updates of
+   this fork preserve its existing pairing and preferences.
 
 The fork uses bundle ID **`com.hidoba.Soduto`**, with its own preferences and
 keychain identity names. Automatic upstream Sparkle updates are disabled. Use
@@ -160,6 +178,7 @@ Run the regression checks with the Xcode toolchain selected:
 swift test
 python3 scripts/test-clipboard-service.py
 python3 scripts/test-pairing-transport.py
+python3 scripts/test-diagnostics-settings.py
 ```
 
 The [build workflow](.github/workflows/build.yml) contains the complete unsigned
