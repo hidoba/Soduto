@@ -93,6 +93,10 @@ final class KeychainTLSPrivateKey: NIOSSLCustomPrivateKey, Hashable, @unchecked 
         let message = Data(data.readableBytesView)
         let promise = channel.eventLoop.makePromise(of: ByteBuffer.self)
         Self.worker.async { [self] in
+            guard channel.isActive else {
+                promise.fail(ChannelError.ioOnClosedChannel)
+                return
+            }
             if let failure = Self.failures[identityID] {
                 promise.fail(failure)
                 return

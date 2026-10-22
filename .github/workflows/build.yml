@@ -18,6 +18,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  keychain-tls:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Keychain identity and real mutual TLS regression tests
+        run: python3 scripts/test-keychain-tls.py
   macos:
     runs-on: macos-26
     timeout-minutes: 35
@@ -33,8 +42,6 @@ jobs:
         run: python3 scripts/test-pairing-transport.py
       - name: Diagnostic settings and logging regression tests
         run: python3 scripts/test-diagnostics-settings.py
-      - name: Keychain identity and real mutual TLS regression tests
-        run: python3 scripts/test-keychain-tls.py
       - name: Build application and extensions
         run: |
           set -euo pipefail

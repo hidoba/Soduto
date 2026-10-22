@@ -51,12 +51,8 @@ private struct Fixture {
 
     init(in keychain: SecKeychain) throws {
         let rsa = try _RSA.Signing.PrivateKey(keySize: .bits2048)
-        var error: Unmanaged<CFError>?
-        let memoryKey = try XCTUnwrap(SecKeyCreateWithData(Data(rsa.derRepresentation) as CFData, [
-            kSecAttrKeyType: kSecAttrKeyTypeRSA,
-            kSecAttrKeyClass: kSecAttrKeyClassPrivate
-        ] as CFDictionary, &error))
-        key = try CertificateUtils.storePrivateKey(memoryKey, name: UUID().uuidString, keychain: keychain)
+        key = try CertificateUtils.storePrivateKey(Data(rsa.pemRepresentation.utf8), name: UUID().uuidString,
+                                                  keychain: keychain)
         let x509 = try CertificateUtils.createSelfSignedCertificate(commonName: UUID().uuidString,
                                                                    privateKey: rsa, expirationInterval: 86400)
         var serializer = DER.Serializer()
@@ -161,11 +157,44 @@ final class KeychainTLSTests: XCTestCase {
         }
     }
 
+    func testNonExportablePrivateKeyCanStillSignTLSChallenges() throws {
+        let keychain = try TestKeychain()
+        let fixture = try Fixture(in: keychain.keychain)
+        let key = fixture.key
+        var error: Unmanaged<CFError>?
+        XCTAssertNil(SecKeyCopyExternalRepresentation(key, &error))
+        let signer = KeychainTLSPrivateKey(key: key, identityID: Data(UUID().uuidString.utf8))
+        let publicKey = try XCTUnwrap(SecKeyCopyPublicKey(key))
+        try withChannel { channel in
+            var message = channel.allocator.buffer(capacity: 16)
+            message.writeString("synthetic input")
+            let signature = try signer.sign(channel: channel, algorithm: .rsaPssRsaeSha256, data: message).wait()
+            var error: Unmanaged<CFError>?
+            XCTAssertTrue(SecKeyVerifySignature(publicKey, .rsaSignatureMessagePSSSHA256,
+                                                Data(message.readableBytesView) as CFData,
+                                                Data(signature.readableBytesView) as CFData, &error))
+        }
+    }
+
     func testPermanentIdentityHasReadableLabelAndRetainsCertificate() throws {
         let keychain = try TestKeychain()
         let fixture = try Fixture(in: keychain.keychain)
         let attributes = try XCTUnwrap(SecKeyCopyAttributes(fixture.key) as? [String: Any])
         XCTAssertEqual(attributes[kSecAttrLabel as String] as? String, "Soduto Device Identity")
+        var access: SecAccess?
+        let item = unsafeBitCast(fixture.key, to: SecKeychainItem.self)
+        XCTAssertEqual(SecKeychainItemCopyAccess(item, &access), errSecSuccess)
+        let signingACLs = try XCTUnwrap(SecAccessCopyMatchingACLList(try XCTUnwrap(access),
+                                                                  kSecACLAuthorizationSign) as? [SecACL])
+        XCTAssertFalse(signingACLs.isEmpty)
+        for acl in signingACLs {
+            var applications: CFArray?
+            var description: CFString?
+            var flags = SecKeychainPromptSelector()
+            XCTAssertEqual(SecACLCopyContents(acl, &applications, &description, &flags), errSecSuccess)
+            XCTAssertEqual(description as String?, "Soduto Device Identity")
+            XCTAssertFalse((applications as? [SecTrustedApplication] ?? []).isEmpty)
+        }
         _ = try KeychainTLSIdentity.configuration(for: fixture.identity, server: false)
         _ = try KeychainTLSIdentity.configuration(for: fixture.identity, server: true)
         var certificate: SecCertificate?

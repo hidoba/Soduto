@@ -392,33 +392,50 @@ public class CertificateUtils {
     /// Store only after signing the new certificate in memory. A named access
     /// descriptor is what macOS displays in authorization dialogs; a key's label
     /// alone does not replace the legacy "<key>" placeholder.
-    class func storePrivateKey(_ key: SecKey, name: String, keychain: SecKeychain? = nil) throws -> SecKey {
+    class func storePrivateKey(_ pemData: Data, name: String, keychain: SecKeychain? = nil) throws -> SecKey {
         let displayName = "Soduto Device Identity"
         var access: SecAccess?
-        // nil trusts the creating application. An empty array would trust every
-        // application and must not be used here.
+        // nil uses the system default: trust only the creating application.
         let accessStatus = SecAccessCreate(displayName as CFString, nil, &access)
         guard accessStatus == errSecSuccess, let access else {
             throw CertificateError.addKeyFailure(status: accessStatus)
         }
-        var attributes: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecValueRef as String: key,
-            kSecAttrLabel as String: displayName,
-            kSecAttrApplicationTag as String: Data(name.utf8),
-            kSecAttrAccess as String: access,
-            kSecReturnRef as String: true
-        ]
-        if let keychain { attributes[kSecUseKeychain as String] = keychain }
-        var result: CFTypeRef?
-        let status = SecItemAdd(attributes as CFDictionary, &result)
-        guard status == errSecSuccess, let result,
-              CFGetTypeID(result) == SecKeyGetTypeID() else {
+        var destination = keychain
+        if destination == nil {
+            let status = SecKeychainCopyDefault(&destination)
+            guard status == errSecSuccess else { throw CertificateError.addKeyFailure(status: status) }
+        }
+        guard let destination else { throw CertificateError.addKeyFailure(status: errSecNoDefaultKeychain) }
+        var parameters = SecItemImportExportKeyParameters()
+        parameters.version = UInt32(SEC_KEY_IMPORT_EXPORT_PARAMS_VERSION)
+        parameters.accessRef = .passUnretained(access)
+        let usage = [kSecAttrCanSign] as CFArray
+        parameters.keyUsage = .passUnretained(usage)
+        // New stored keys cannot be exported, even by the creating app.
+        let attributes = [kSecAttrIsPermanent, kSecAttrIsSensitive] as CFArray
+        parameters.keyAttributes = .passUnretained(attributes)
+        var format = SecExternalFormat.formatOpenSSL
+        var type = SecExternalItemType.itemTypePrivateKey
+        var items: CFArray?
+        let status = withExtendedLifetime((access, usage, attributes)) {
+            SecItemImport(pemData as CFData, nil, &format, &type, [], &parameters, destination, &items)
+        }
+        guard status == errSecSuccess, let keys = items as? [SecKey], keys.count == 1 else {
             throw CertificateError.addKeyFailure(status: status)
         }
-        return (result as! SecKey)
+        let key = keys[0]
+        let labelStatus = SecItemUpdate([
+            kSecClass: kSecClassKey, kSecMatchItemList: [key]
+        ] as CFDictionary, [
+            kSecAttrLabel: displayName, kSecAttrApplicationTag: Data(name.utf8)
+        ] as CFDictionary)
+        guard labelStatus == errSecSuccess else {
+            try? deleteKey(key)
+            throw CertificateError.addKeyFailure(status: labelStatus)
+        }
+        return key
     }
-    
+
     public class func createIdentity(label: String, certCommonName: String, expirationInterval: TimeInterval) throws -> SecIdentity? {
         // Clean up any orphaned certificates to avoid conflicts
         // (e.g., user deleted "Soduto Host" preference but not the underlying certificate)
@@ -431,6 +448,7 @@ public class CertificateUtils {
         // Exporting a persistent key here would trigger an export prompt even
         // on first launch. Existing identities are reused by getOrCreateIdentity.
         let (_, privateKey) = try generateRSAKeyPair(sizeInBits: 2048)
+        var savedPrivateKey: SecKey?
         
         do {
             // This key is still ephemeral; no Keychain export authorization.
@@ -466,7 +484,7 @@ public class CertificateUtils {
             
             // Give the permanent key a readable label and normal creator-only
             // access. TLS uses SecKeyCreateSignature, never another export.
-            _ = try storePrivateKey(privateKey, name: label)
+            savedPrivateKey = try storePrivateKey(pemData, name: label)
 
             // Add certificate to keychain
             try addCertificate(secCertificate, name: label)
@@ -491,7 +509,7 @@ public class CertificateUtils {
             }
         }
         catch {
-            try? deleteKey(privateKey)
+            if let savedPrivateKey { try? deleteKey(savedPrivateKey) }
             throw error
         }
     }
