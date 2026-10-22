@@ -49,9 +49,39 @@ private struct Fixture {
     let certificate: NIOSSLCertificate
     let certificateData: Data
 
-    init(in keychain: SecKeychain) throws {
-        let rsa = try _RSA.Signing.PrivateKey(keySize: .bits2048)
-        key = try CertificateUtils.storePrivateKey(Data(rsa.pemRepresentation.utf8), keychain: keychain)
+    init(in keychain: SecKeychain, legacy: Bool = false, large: Bool = false) throws {
+        let rsa = try _RSA.Signing.PrivateKey(keySize: large ? .bits4096 : .bits2048)
+        if legacy {
+            var access: SecAccess?
+            XCTAssertEqual(SecAccessCreate("Synthetic legacy identity" as CFString, nil, &access), errSecSuccess)
+            let acl = try XCTUnwrap(access)
+            // Export requires approval; signing has its own permission. Only this
+            // disposable test identity permits signing from any application.
+            for entry in try XCTUnwrap(SecAccessCopyMatchingACLList(acl, kSecACLAuthorizationExportClear) as? [SecACL]) {
+                XCTAssertEqual(SecACLSetContents(entry, [] as CFArray, "Synthetic export approval" as CFString,
+                                                 SecKeychainPromptSelector(rawValue: 1)), errSecSuccess)
+            }
+            var signing: SecACL?
+            XCTAssertEqual(SecACLCreateWithSimpleContents(acl, nil, "Synthetic signing" as CFString,
+                                                          SecKeychainPromptSelector(rawValue: 0), &signing), errSecSuccess)
+            XCTAssertEqual(SecACLUpdateAuthorizations(try XCTUnwrap(signing), [kSecACLAuthorizationSign] as CFArray), errSecSuccess)
+            var parameters = SecItemImportExportKeyParameters()
+            parameters.version = UInt32(SEC_KEY_IMPORT_EXPORT_PARAMS_VERSION)
+            parameters.accessRef = .passUnretained(acl)
+            let attributes = [kSecAttrIsPermanent, kSecAttrIsExtractable] as CFArray
+            parameters.keyAttributes = .passUnretained(attributes)
+            var format = SecExternalFormat.formatOpenSSL
+            var kind = SecExternalItemType.itemTypePrivateKey
+            var items: CFArray?
+            let status = withExtendedLifetime((acl, attributes)) {
+                SecItemImport(Data(rsa.pemRepresentation.utf8) as CFData, nil, &format, &kind, [],
+                              &parameters, keychain, &items)
+            }
+            XCTAssertEqual(status, errSecSuccess)
+            key = try XCTUnwrap((items as? [SecKey])?.first)
+        } else {
+            key = try CertificateUtils.storePrivateKey(Data(rsa.pemRepresentation.utf8), keychain: keychain)
+        }
         let x509 = try CertificateUtils.createSelfSignedCertificate(commonName: UUID().uuidString,
                                                                    privateKey: rsa, expirationInterval: 86400)
         var serializer = DER.Serializer()
@@ -84,10 +114,10 @@ private final class HandshakeCapture: ChannelInboundHandler {
 final class KeychainTLSTests: XCTestCase {
     override func setUp() { KeychainTLSPrivateKey.resetAuthorizationFailures() }
 
-    private func memoryKey() throws -> SecKey {
+    private func memoryKey(bits: Int = 2048) throws -> SecKey {
         var error: Unmanaged<CFError>?
         return try XCTUnwrap(SecKeyCreateRandomKey([
-            kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048,
+            kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: bits,
             kSecAttrIsPermanent: false
         ] as CFDictionary, &error))
     }
@@ -183,6 +213,41 @@ final class KeychainTLSTests: XCTestCase {
         }
     }
 
+    func testSigningUsesOnlyRawRSAWithPubliclySizedPadding() throws {
+        let key = try memoryKey(bits: 4096)
+        let signer = KeychainTLSPrivateKey(key: key, identityID: Data(UUID().uuidString.utf8), modulusBitCount: 4096) { algorithm, encoded in
+            XCTAssertEqual(algorithm, .rsaSignatureRaw)
+            XCTAssertEqual(encoded.count, 512)
+            return try KeychainRSASignature.signEncoded(encoded, using: key)
+        }
+        let publicKey = try XCTUnwrap(SecKeyCopyPublicKey(key))
+        try withChannel { channel in
+            var message = channel.allocator.buffer(capacity: 20)
+            message.writeString("synthetic raw signing")
+            let signature = try signer.sign(channel: channel, algorithm: .rsaPssRsaeSha512, data: message).wait()
+            var error: Unmanaged<CFError>?
+            XCTAssertTrue(SecKeyVerifySignature(publicKey, .rsaSignatureMessagePSSSHA512,
+                                                Data(message.readableBytesView) as CFData,
+                                                Data(signature.readableBytesView) as CFData, &error))
+        }
+    }
+
+    func testEncodingRejectsInvalidSizesAndUnsupportedAlgorithms() throws {
+        for bits in [0, 512, 16385, Int.max] {
+            XCTAssertThrowsError(try KeychainRSASignature.encode(Data(), algorithm: .rsaPssRsaeSha256, modulusBitCount: bits))
+        }
+        XCTAssertThrowsError(try KeychainRSASignature.encode(Data(), algorithm: .rsaPssRsaeSha512, modulusBitCount: 1024))
+        XCTAssertThrowsError(try KeychainRSASignature.encode(Data(), algorithm: .rsaPkcs1Sha1, modulusBitCount: 2048))
+    }
+
+    func testPSSUsesFreshSaltAndPKCS1IsDeterministic() throws {
+        let message = Data("synthetic padding challenge".utf8)
+        XCTAssertNotEqual(try KeychainRSASignature.encode(message, algorithm: .rsaPssRsaeSha256, modulusBitCount: 2048),
+                          try KeychainRSASignature.encode(message, algorithm: .rsaPssRsaeSha256, modulusBitCount: 2048))
+        XCTAssertEqual(try KeychainRSASignature.encode(message, algorithm: .rsaPkcs1Sha256, modulusBitCount: 2048),
+                       try KeychainRSASignature.encode(message, algorithm: .rsaPkcs1Sha256, modulusBitCount: 2048))
+    }
+
     func testNonExportablePrivateKeyCanStillSignTLSChallenges() throws {
         let keychain = try TestKeychain()
         let fixture = try Fixture(in: keychain.keychain)
@@ -233,10 +298,11 @@ final class KeychainTLSTests: XCTestCase {
         XCTAssertEqual(SecCertificateCopyData(try XCTUnwrap(certificate)) as Data, fixture.certificateData)
     }
 
-    private func handshake(version: TLSVersion, algorithm: SignatureAlgorithm? = nil, repetitions: Int = 1) throws {
+    private func handshake(version: TLSVersion, algorithm: SignatureAlgorithm? = nil, repetitions: Int = 1,
+                           legacy: Bool = false, large: Bool = false) throws {
         let keychain = try TestKeychain()
-        let serverIdentity = try Fixture(in: keychain.keychain)
-        let clientIdentity = try Fixture(in: keychain.keychain)
+        let serverIdentity = try Fixture(in: keychain.keychain, legacy: legacy, large: large)
+        let clientIdentity = try Fixture(in: keychain.keychain, legacy: legacy, large: large)
         var serverConfiguration = try KeychainTLSIdentity.configuration(for: serverIdentity.identity, server: true)
         var clientConfiguration = try KeychainTLSIdentity.configuration(for: clientIdentity.identity, server: false)
         serverConfiguration.maximumTLSVersion = version
@@ -285,4 +351,7 @@ final class KeychainTLSTests: XCTestCase {
     func testMutualTLS12WithRSAPKCS1() throws { try handshake(version: .tlsv12, algorithm: .rsaPkcs1Sha256) }
     func testMutualTLS13() throws { try handshake(version: .tlsv13) }
     func testRepeatedReconnectsWithSameIdentity() throws { try handshake(version: .tlsv13, repetitions: 5) }
+    func testLegacyExportProtectedIdentityWithTLS12() throws { try handshake(version: .tlsv12, legacy: true) }
+    func testLegacyExportProtectedIdentityWithTLS13() throws { try handshake(version: .tlsv13, repetitions: 5, legacy: true) }
+    func test4096BitIdentityWithTLS13() throws { try handshake(version: .tlsv13, large: true) }
 }

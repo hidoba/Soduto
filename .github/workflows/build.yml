@@ -27,6 +27,8 @@ jobs:
           persist-credentials: false
       - name: Keychain identity and real mutual TLS regression tests
         run: python3 scripts/test-keychain-tls.py
+      - name: Legacy export-protected key across separate processes
+        run: python3 scripts/test-keychain-legacy.py
   macos:
     runs-on: macos-26
     timeout-minutes: 35
