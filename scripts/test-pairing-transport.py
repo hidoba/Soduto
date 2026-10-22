@@ -186,7 +186,7 @@ public final class ConnectionProvider {}
 extension FakeConfiguration: DeviceManagerConfiguration {}
 func CACurrentMediaTime() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
 enum PairingState { case outgoingRequest, incomingRequest, success, failed, timeout }
-enum PairingWindowController {
+@MainActor enum PairingWindowController {
     static var windows: [String: PairingState] = [:]
     static func isActive(for id: String) -> Bool { windows[id] != nil }
     static func state(for id: String) -> PairingState? { windows[id] }
@@ -409,6 +409,7 @@ deviceManager.closeAllConnections()
 precondition(deviceManager.pairedRechableDevices.isEmpty)
 print("PASS: competing connections cannot replace an active pairing prompt")
 
+MainActor.assumeIsolated {
 let uiConfig = DeviceConfiguration()
 uiConfig.isPaired = true; uiConfig.certificate = Data([2])
 let uiManager = DeviceManager(config: FakeConfiguration(uiConfig), serviceManager: ServiceManager())
@@ -431,6 +432,7 @@ PairingInterfaceController.showPairingWindow(for: uiDevice)
 spin()
 precondition(!PairingWindowController.isActive(for: uiDevice.id), "An interrupted request reopened a stale prompt")
 print("PASS: interrupted pairing cannot reopen an obsolete incoming prompt")
+}
 '''
 # Independent known-answer check for the production verification hash function.
 expected = hashlib.sha256(bytes([2, 1]) + b'1700000000').hexdigest()[:8].upper()
