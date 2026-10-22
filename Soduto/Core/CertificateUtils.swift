@@ -372,7 +372,7 @@ public class CertificateUtils {
     /// Store only after signing the new certificate in memory. A named access
     /// descriptor is what macOS displays in authorization dialogs; a key's label
     /// alone does not replace the legacy "<key>" placeholder.
-    class func storePrivateKey(_ pemData: Data, name: String, keychain: SecKeychain? = nil) throws -> SecKey {
+    class func storePrivateKey(_ pemData: Data, keychain: SecKeychain? = nil) throws -> SecKey {
         let displayName = "Soduto Device Identity"
         var access: SecAccess?
         // nil uses the system default: trust only the creating application.
@@ -405,9 +405,9 @@ public class CertificateUtils {
         }
         let key = keys[0]
         let labelStatus = SecItemUpdate([
-            kSecClass: kSecClassKey, kSecMatchItemList: [key]
+            kSecClass: kSecClassKey, kSecMatchItemList: [key], kSecMatchSearchList: [destination]
         ] as CFDictionary, [
-            kSecAttrLabel: displayName, kSecAttrApplicationTag: Data(name.utf8)
+            kSecAttrLabel: displayName
         ] as CFDictionary)
         guard labelStatus == errSecSuccess else {
             try? deleteKey(key)
@@ -450,7 +450,7 @@ public class CertificateUtils {
             
             // Give the permanent key a readable label and normal creator-only
             // access. TLS uses SecKeyCreateSignature, never another export.
-            savedPrivateKey = try storePrivateKey(pemData, name: label)
+            savedPrivateKey = try storePrivateKey(pemData)
 
             // Add certificate to keychain
             try addCertificate(secCertificate, name: label)

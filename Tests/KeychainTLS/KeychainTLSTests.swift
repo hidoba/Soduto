@@ -51,8 +51,7 @@ private struct Fixture {
 
     init(in keychain: SecKeychain) throws {
         let rsa = try _RSA.Signing.PrivateKey(keySize: .bits2048)
-        key = try CertificateUtils.storePrivateKey(Data(rsa.pemRepresentation.utf8), name: UUID().uuidString,
-                                                  keychain: keychain)
+        key = try CertificateUtils.storePrivateKey(Data(rsa.pemRepresentation.utf8), keychain: keychain)
         let x509 = try CertificateUtils.createSelfSignedCertificate(commonName: UUID().uuidString,
                                                                    privateKey: rsa, expirationInterval: 86400)
         var serializer = DER.Serializer()
@@ -179,7 +178,12 @@ final class KeychainTLSTests: XCTestCase {
     func testPermanentIdentityHasReadableLabelAndRetainsCertificate() throws {
         let keychain = try TestKeychain()
         let fixture = try Fixture(in: keychain.keychain)
-        let attributes = try XCTUnwrap(SecKeyCopyAttributes(fixture.key) as? [String: Any])
+        var result: CFTypeRef?
+        XCTAssertEqual(SecItemCopyMatching([
+            kSecClass: kSecClassKey, kSecMatchItemList: [fixture.key],
+            kSecMatchSearchList: [keychain.keychain], kSecReturnAttributes: true
+        ] as CFDictionary, &result), errSecSuccess)
+        let attributes = try XCTUnwrap(result as? [String: Any])
         XCTAssertEqual(attributes[kSecAttrLabel as String] as? String, "Soduto Device Identity")
         var access: SecAccess?
         let item = unsafeBitCast(fixture.key, to: SecKeychainItem.self)
