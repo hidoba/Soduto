@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -27,6 +31,7 @@ jobs:
         run: python3 scripts/test-clipboard-service.py
       - name: Build application and extensions
         run: |
+          set -euo pipefail
           mkdir -p build
           xcodebuild -version
           xcodebuild -project Soduto.xcodeproj -scheme Soduto -configuration Release \
@@ -36,6 +41,8 @@ jobs:
             build 2>&1 | tee build/xcodebuild.log
       - name: Package unsigned build
         run: |
+          test -x build/DerivedData/Build/Products/Release/Soduto.app/Contents/MacOS/Soduto
+          file build/DerivedData/Build/Products/Release/Soduto.app/Contents/MacOS/Soduto
           ditto -c -k --keepParent build/DerivedData/Build/Products/Release/Soduto.app build/Soduto-unsigned.zip
           shasum -a 256 build/Soduto-unsigned.zip > build/Soduto-unsigned.zip.sha256
       - uses: actions/upload-artifact@v4

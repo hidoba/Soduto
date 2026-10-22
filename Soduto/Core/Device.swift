@@ -533,7 +533,7 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
                 if Diagnostics.shared.packetTracingEnabled {
                     Diagnostics.record("service.packet_handled", level: .debug, fields: [
                         "device": Diagnostics.peer(id), "connection": connection.diagnosticID,
-                        "packet_type": packet.type, "packet_id": String(packet.id), "service": String(describing: type(of: handler))
+                        "packet_type": packet.type, "packet_id": String(packet.id), "service": String(describing: Swift.type(of: handler))
                     ])
                 }
                 return
