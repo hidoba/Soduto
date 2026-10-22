@@ -25,7 +25,9 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     public var serviceManager: ServiceManager?
     public var config: Configuration?
     
-    let statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    let statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private var statusBarBaseIcon: NSImage?
+    private var displayedConnectionCount: Int?
     private var cancellables: Set<AnyCancellable> = []
     /// Persistent references to device menu items keyed by device ID, for in-place image updates
     private var deviceMenuItems: [String: NSMenuItem] = [:]
@@ -45,6 +47,7 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     override public func awakeFromNib() {
         let statusBarIcon = #imageLiteral(resourceName: "statusBarIcon")
         statusBarIcon.isTemplate = true
+        statusBarBaseIcon = statusBarIcon
         
         if #available(macOS 10.14, *) {
             self.statusBarItem.button?.image = statusBarIcon
@@ -52,8 +55,7 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
             self.statusBarItem.image = statusBarIcon
         }
         self.statusBarItem.menu = self.statusBarMenu
-        self.statusBarItem.button?.imagePosition = .imageLeft
-        self.statusBarItem.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        self.statusBarItem.button?.imagePosition = .imageOnly
         updateConnectionCount()
         
         let dragTypes: [NSPasteboard.PasteboardType] = [
@@ -232,7 +234,11 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
         // Count usable paired peers, rather than discovery results or sockets.
         let count = deviceDataSource?.pairedRechableDevices.count ?? 0
         guard let button = statusBarItem.button else { return }
-        button.title = count > 0 ? String(count) : "×"
+        button.title = ""
+        if let baseIcon = statusBarBaseIcon, displayedConnectionCount != count {
+            button.image = Self.connectionCountIcon(base: baseIcon, count: count)
+            displayedConnectionCount = count
+        }
         let summary: String
         switch count {
         case 0: summary = "No connected devices"
@@ -241,6 +247,38 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
         }
         button.toolTip = "Soduto — \(summary)"
         button.setAccessibilityLabel("Soduto, \(summary)")
+    }
+
+    private static func connectionCountIcon(base: NSImage, count: Int) -> NSImage {
+        let size = NSSize(width: 20, height: 20)
+        let label = (count == 0 ? "×" : count > 99 ? "99+" : String(count)) as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 7, weight: .bold),
+            .foregroundColor: NSColor.black
+        ]
+        let textSize = label.size(withAttributes: attributes)
+        let badgeWidth = max(9, ceil(textSize.width) + 3)
+        let badge = NSRect(x: size.width - badgeWidth, y: size.height - 9, width: badgeWidth, height: 9)
+        let image = NSImage(size: size, flipped: false) { _ in
+            base.draw(in: NSRect(origin: .zero, size: size))
+            // Clear a halo so the small badge stays distinct from the icon.
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(roundedRect: badge.insetBy(dx: -0.75, dy: -0.75), xRadius: 5.25, yRadius: 5.25).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: badge, xRadius: 4.5, yRadius: 4.5).fill()
+            // Knock the glyph out of the template's alpha, preserving contrast
+            // in light/dark appearances and while the menu is highlighted.
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            label.draw(at: NSPoint(x: badge.midX - textSize.width / 2,
+                                   y: badge.midY - textSize.height / 2), withAttributes: attributes)
+            NSGraphicsContext.restoreGraphicsState()
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
     
     @MainActor
