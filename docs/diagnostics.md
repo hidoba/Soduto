@@ -84,7 +84,8 @@ with `remote_not_newer` is expected for stale/unknown reconnect contents; a fres
 
 Clipboard decisions also distinguish identical content, previously seen generations,
 older generations and timestamp ties. A bounded in-memory cache remembers only
-SHA256 fingerprints and timestamps; neither is written to the journal. Copies
+SHA256 fingerprints and timestamps; fingerprints are never written to the journal.
+Decision records include timestamps to help compare freshness. Copies
 observed in the same millisecond receive increasing timestamps. This fork marks
 its ordered normal clipboard packets with `sodutoTimestamped`; ordinary KDE
 Connect packets remain live edits without depending on their sender's clock.
