@@ -13,4 +13,7 @@
 // Copy `LocalConfig.xcconfig.sample` → `LocalConfig.xcconfig` and fill in your values.
 // `LocalConfig.xcconfig` is untracked by git, never commit it.
 
+BUNDLE_ID = com.hidoba.Soduto
+SODUTO_SOURCE_REVISION = local-development
+
 #include? "LocalConfig.xcconfig"

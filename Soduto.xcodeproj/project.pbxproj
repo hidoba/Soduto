@@ -204,6 +204,11 @@
 		F826E6C72DB302F000E736CE /* RunCommandService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F826E6C62DB302F000E736CE /* RunCommandService.swift */; };
 		F826E6C92DB419AF00E736CE /* RunCommandsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F826E6C82DB419AF00E736CE /* RunCommandsWindowController.swift */; };
 		F8B2BB242DAFC87B00FFA284 /* ConnectivityReportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8B2BB232DAFC87B00FFA284 /* ConnectivityReportService.swift */; };
+		FACF9287295044FFA6E0819F /* DiagnosticEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70C271648416462493A9B222 /* DiagnosticEvent.swift */; };
+		1AE6D903F1BE4890852C9862 /* DiagnosticLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E195859BFBE3462EA6EDC544 /* DiagnosticLogStore.swift */; };
+		B397BD157FEF49C48E1E5C8F /* ClipboardSyncState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0FFF32023394200AFD6788B /* ClipboardSyncState.swift */; };
+		1039553F516641C78981C80E /* RecoveryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F07C91DC6F74F0888599EF4 /* RecoveryPolicy.swift */; };
+		E9508E93318146C3840CCC95 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9575D0E5ACE6412F8A2C25F6 /* Diagnostics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -486,6 +491,11 @@
 		F826E6C62DB302F000E736CE /* RunCommandService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCommandService.swift; sourceTree = "<group>"; };
 		F826E6C82DB419AF00E736CE /* RunCommandsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCommandsWindowController.swift; sourceTree = "<group>"; };
 		F8B2BB232DAFC87B00FFA284 /* ConnectivityReportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectivityReportService.swift; sourceTree = "<group>"; };
+		70C271648416462493A9B222 /* DiagnosticEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticEvent.swift; sourceTree = "<group>"; };
+		E195859BFBE3462EA6EDC544 /* DiagnosticLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogStore.swift; sourceTree = "<group>"; };
+		F0FFF32023394200AFD6788B /* ClipboardSyncState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardSyncState.swift; sourceTree = "<group>"; };
+		8F07C91DC6F74F0888599EF4 /* RecoveryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryPolicy.swift; sourceTree = "<group>"; };
+		9575D0E5ACE6412F8A2C25F6 /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -803,6 +813,7 @@
 		8456F4A41D7DE31A006EFE19 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				932DADEDBFE94C4D82768E3B /* Diagnostics */,
 				02EC48A91F2296C600C9370F /* Configuration */,
 				31A4219C2F45B3E9003B97FC /* Network */,
 				8468BDFE1DEB7F5F003B9925 /* Utils */,
@@ -987,6 +998,18 @@
 				317064992F8E30BC00BC6593 /* WebcamService.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		932DADEDBFE94C4D82768E3B /* Diagnostics */ = {
+			isa = PBXGroup;
+			children = (
+				70C271648416462493A9B222 /* DiagnosticEvent.swift */,
+				E195859BFBE3462EA6EDC544 /* DiagnosticLogStore.swift */,
+				F0FFF32023394200AFD6788B /* ClipboardSyncState.swift */,
+				8F07C91DC6F74F0888599EF4 /* RecoveryPolicy.swift */,
+				9575D0E5ACE6412F8A2C25F6 /* Diagnostics.swift */,
+			);
+			path = Diagnostics;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -1254,6 +1277,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FACF9287295044FFA6E0819F /* DiagnosticEvent.swift in Sources */,
+				1AE6D903F1BE4890852C9862 /* DiagnosticLogStore.swift in Sources */,
+				B397BD157FEF49C48E1E5C8F /* ClipboardSyncState.swift in Sources */,
+				1039553F516641C78981C80E /* RecoveryPolicy.swift in Sources */,
+				E9508E93318146C3840CCC95 /* Diagnostics.swift in Sources */,
 				8468BDFB1DE8F10D003B9925 /* NotificationsService.swift in Sources */,
 				842506731ED4CEF800AEE25F /* DeviceListController.swift in Sources */,
 				0248E0FF1F23C4AF00C411F7 /* DevicePreferencesViewController.swift in Sources */,
@@ -1528,7 +1556,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -1538,7 +1566,7 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2022 Soduto. All rights reserved.";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 3.2.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID).Soduto-Share";
@@ -1564,7 +1592,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -1574,7 +1602,7 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2022 Soduto. All rights reserved.";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 3.2.0;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID).Soduto-Share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1711,7 +1739,7 @@
 				CODE_SIGN_IDENTITY = "Mac Developer";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Soduto/Info.plist;
@@ -1719,7 +1747,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited)";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 3.2.0;
 				OTHER_SWIFT_FLAGS = "-Xfrontend -warn-long-function-bodies=500";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1741,7 +1769,7 @@
 				CODE_SIGN_IDENTITY = "Mac Developer";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Soduto/Info.plist;
@@ -1749,7 +1777,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited)";
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 3.2.0;
 				OTHER_SWIFT_FLAGS = "-Xfrontend -warn-long-function-bodies=500";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1813,7 +1841,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 3.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID)-Files";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1838,7 +1866,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 3.1.0;
+				MARKETING_VERSION = 3.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID)-Files";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

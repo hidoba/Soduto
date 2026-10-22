@@ -17,4 +17,4 @@
 //   SodutoFiles    → $(BUNDLE_ID)Files
 
 DEVELOPMENT_TEAM = <YOUR DEVELOPMENT TEAM>
-BUNDLE_ID = com.soduto.Soduto
+BUNDLE_ID = com.hidoba.Soduto

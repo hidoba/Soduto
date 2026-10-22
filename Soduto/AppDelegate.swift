@@ -43,6 +43,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
     // MARK: NSApplicationDelegate
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        Diagnostics.record("app.started", fields: [
+            "app_version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString
+        ])
         self.userNotificationManager = UserNotificationManager(config: self.config, serviceManager: self.serviceManager, deviceManager: self.deviceManager)
         self.config.capabilitiesDataSource = self.serviceManager
         self.connectionProvider.delegate = self.deviceManager
@@ -51,8 +56,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
         self.statusBarMenuController.config = self.config
         self.deviceManager.delegate = self
         
-        self.checkForUpdatesMenuItem.target = updateManager.updaterController
-        self.checkForUpdatesMenuItem.action = #selector(SPUStandardUpdaterController.checkForUpdates(_:))
+        if UpdateManager.isForkBuild {
+            self.checkForUpdatesMenuItem.title = "Fork Releases on GitHub…"
+            self.checkForUpdatesMenuItem.target = updateManager
+            self.checkForUpdatesMenuItem.action = #selector(UpdateManager.openForkReleases(_:))
+        } else {
+            self.checkForUpdatesMenuItem.target = updateManager.updaterController
+            self.checkForUpdatesMenuItem.action = #selector(SPUStandardUpdaterController.checkForUpdates(_:))
+        }
         
         self.serviceManager.add(service: NotificationsService())
         self.serviceManager.add(service: ClipboardService())
@@ -83,6 +94,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
         registerShareExtensionObserver(notificationCenter, notificationName)
         
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(wakeUpListener(_:)), name: NSWorkspace.didWakeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleepListener(_:)), name: NSWorkspace.willSleepNotification, object: nil)
+        self.statusBarMenuController.statusBarMenu.addItem(.separator())
+        self.statusBarMenuController.statusBarMenu.addItem(Diagnostics.shared.makeMenu(
+            snapshot: { [weak self] in self?.diagnosticSnapshot() ?? [:] },
+            recover: { [weak self] in self?.connectionProvider.restart(reason: "user") }
+        ))
         
         self.connectionProvider.start()
         
@@ -90,6 +107,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {
+        Diagnostics.record("app.stopping")
+        Diagnostics.shared.flush()
         heartbeatTimer?.invalidate()
         AppDefaultsStore.ShareExtension.appLastHeartbeat = 0
         AppDefaultsStore.ShareExtension.reachableDevices = []
@@ -141,8 +160,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
     // MARK: WakeUP Function
     
     @objc private func wakeUpListener(_ aNotification: Notification) {
-        self.connectionProvider.restart()
+        Diagnostics.record("app.woke")
+        self.connectionProvider.restart(reason: "wake")
         self.updateValidDevices()
+    }
+
+    @objc private func willSleepListener(_ notification: Notification) {
+        Diagnostics.record("app.will_sleep")
+        Diagnostics.shared.flush()
+    }
+
+    private func diagnosticSnapshot() -> [String: Any] {
+        ["app_version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+         "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+         "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+         "network": connectionProvider.diagnosticSnapshot(), "devices": deviceManager.diagnosticSnapshot(),
+         "services": serviceManager.services.map { service in
+             ["service": String(describing: type(of: service)), "incoming": service.incomingCapabilities.sorted(),
+              "outgoing": service.outgoingCapabilities.sorted()] as [String: Any]
+         }]
     }
     
     // MARK: Extension Support
@@ -151,6 +187,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
         AppDefaultsStore.ShareExtension.appLastHeartbeat = Date().timeIntervalSince1970
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             AppDefaultsStore.ShareExtension.appLastHeartbeat = Date().timeIntervalSince1970
+            let app = AppDelegate.shared()
+            Diagnostics.record("app.health", fields: ["reachable": String(app.validDevices.count),
+                                                     "unavailable": String(app.deviceManager.unavailableDevices.count)])
         }
     }
     

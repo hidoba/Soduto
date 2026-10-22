@@ -352,11 +352,15 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
     }
     
     public func connection(_ connection: Connection, pairingFailed error: Error) {
+        connection.recordDiagnostic("pairing.failed", level: .error, error: error)
         Logger.device.debug("Connection pairing failed: \(error, privacy: .public)")
         self.delegate?.device(self, pairingFailed: error)
     }
     
     public func connection(_ connection: Connection, pairingStatusChanged status: PairingStatus) {
+        var fields = connection.diagnosticFields
+        fields["state"] = String(describing: status)
+        Diagnostics.record("pairing.state_changed", fields: fields)
         self.updatePairingStatus()
     }
     
@@ -526,8 +530,21 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         for handler in self.packetHandlers {
             let handled = handler.handleDataPacket(packet, fromDevice: self, onConnection: connection)
             if handled {
+                if Diagnostics.shared.packetTracingEnabled {
+                    Diagnostics.record("service.packet_handled", level: .debug, fields: [
+                        "device": Diagnostics.peer(id), "connection": connection.diagnosticID,
+                        "packet_type": packet.type, "packet_id": String(packet.id), "service": String(describing: type(of: handler))
+                    ])
+                }
                 return
             }
+        }
+        // Soduto's transport probe is intentionally not a service capability.
+        if packet.type != "soduto.keepalive" {
+            Diagnostics.record("service.packet_unhandled", level: .warning, fields: [
+                "device": Diagnostics.peer(id), "connection": connection.diagnosticID,
+                "packet_type": packet.type, "packet_id": String(packet.id)
+            ])
         }
     }
     

@@ -150,6 +150,7 @@ public class MDNSDiscoveryProvider {
         startKnockTimer()
         
         Logger.network.info("mDNS provider started on port \(tcpPort, privacy: .public)")
+        Diagnostics.record("discovery.mdns_started", fields: ["tcp_port": String(tcpPort)])
     }
     
     /// Stops mDNS advertisement and discovery.
@@ -169,6 +170,7 @@ public class MDNSDiscoveryProvider {
         lock.unlock()
         
         Logger.network.info("mDNS provider stopped")
+        Diagnostics.record("discovery.mdns_stopped")
     }
     
     // MARK: Private Methods
@@ -247,6 +249,7 @@ public class MDNSDiscoveryProvider {
                 guard due else { continue }
                 
                 Logger.network.info("mDNS knock: \(name, privacy: .public) visible but not connected — re-triggering connection")
+                Diagnostics.record("discovery.mdns_retry", fields: ["device": Diagnostics.peer(name)])
                 self.handleDeviceDiscovered(result)
             }
         }
@@ -326,6 +329,8 @@ extension MDNSDiscoveryProvider: MDNSAdvertisementServiceDelegate {
         lock.unlock()
         
         Logger.network.error("mDNS registration failed: \(errorCode, privacy: .public) — retrying in \(Int(delay), privacy: .public)s")
+        Diagnostics.record("discovery.mdns_registration_failed", level: .error,
+                           fields: ["error_code": String(errorCode), "retry_seconds": String(Int(delay))])
         advertisementService.stop()
         browserQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self, self.isRunning else { return }
@@ -343,12 +348,15 @@ extension MDNSDiscoveryProvider: MDNSBrowseServiceDelegate {
             break
         case .ready:
             Logger.network.info("mDNS browser ready")
+            Diagnostics.record("discovery.mdns_ready")
         case .failed(let error):
+            Diagnostics.record("discovery.mdns_browser_failed", level: .error, fields: Diagnostics.errorFields(error))
             Logger.network.error("mDNS browser failed: \(error, privacy: .public)")
             scheduleBrowseRestart()
         case .cancelled:
             Logger.network.debug("mDNS browser cancelled")
         case .waiting(let error):
+            Diagnostics.record("discovery.mdns_waiting", level: .warning, fields: Diagnostics.errorFields(error))
             Logger.network.notice("mDNS browser waiting: \(error, privacy: .public)")
         @unknown default:
             break
@@ -389,7 +397,7 @@ extension MDNSDiscoveryProvider: MDNSBrowseServiceDelegate {
 extension MDNSDiscoveryProvider: MDNSEndpointResolverDelegate {
     func mdnsEndpointResolver(_ resolver: MDNSEndpointResolver, didResolveAddress address: String, forDeviceId deviceId: String, tcpPort: UInt16) {
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.isRunning else { return }
             self.delegate?.mdnsProvider(self, discoveredDeviceAt: address, port: tcpPort, deviceId: deviceId)
         }
     }

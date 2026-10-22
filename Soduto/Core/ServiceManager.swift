@@ -72,6 +72,7 @@ public class ServiceManager: CapabilitiesDataSource {
     
     /// Setup services for provided device. This is done when a new device becomes ready (accessible and paired)
     public func setup(for device: Device) {
+        Diagnostics.record("services.setup", fields: ["device": Diagnostics.peer(device.id), "count": String(services.count)])
         for service in self.services {
             service.setup(for: device)
         }
@@ -79,6 +80,7 @@ public class ServiceManager: CapabilitiesDataSource {
     
     /// Cleanup services for provided device. This is done when device becomes unavailable or not unpaired
     public func cleanup(for device: Device) {
+        Diagnostics.record("services.cleanup", fields: ["device": Diagnostics.peer(device.id), "count": String(services.count)])
         for service in self.services {
             service.cleanup(for: device)
         }

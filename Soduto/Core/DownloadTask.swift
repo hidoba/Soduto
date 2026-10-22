@@ -339,12 +339,17 @@ public class DownloadTask {
     }
     
     fileprivate func handleError(_ error: Error) {
+        var fields = Diagnostics.errorFields(error)
+        fields["packet_id"] = String(id)
+        Diagnostics.record("payload.download_error", level: .error, fields: fields)
         Logger.network.error("DownloadTask error: \(error, privacy: .public)")
         self.downloadFinished(success: false)
     }
     
     private func downloadFinished(success: Bool) {
         guard !isClosed else { return }
+        Diagnostics.record("payload.download_completed", level: success ? .info : .error,
+                           fields: ["packet_id": String(id), "result": String(success), "bytes": String(bytesReceivedFromNetwork)])
         
         // Capture delegate before close() clears it
         let delegate = self.delegate

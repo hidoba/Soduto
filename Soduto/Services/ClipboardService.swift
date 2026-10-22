@@ -34,15 +34,19 @@ public class ClipboardService: BidirectionalService {
     let outgoingPreferenceKey = AppDefaultsStore.Preferences.Services.Clipboard.outgoingKey
     
     private var monitoringTimer: Timer? = nil
-    private var lastChangeCount: Int = NSPasteboard.general.changeCount
-    private var lastExternalChangeCount: Int = -1
-    private var lastExternalChangeDevice: Device? = nil
+    private var syncState = ClipboardSyncState(changeCount: NSPasteboard.general.changeCount)
     private var devices: [Device] = []
     
     /// Timestamp of the last local clipboard change. Initialized to epoch so that
     /// an incoming clipboard.connect from a peer (with a real timestamp) always wins
     /// on first connect when we have no tracked change history
-    private var lastLocalChangeTimestamp: Date = Date(timeIntervalSince1970: 0)
+    public init() {
+        // Track local changes while disconnected too. Otherwise a reconnect sends
+        // new text with an old timestamp and a stale peer can overwrite it.
+        startMonitoring()
+    }
+
+    deinit { monitoringTimer?.invalidate() }
     
     
     // MARK: Service
@@ -57,20 +61,42 @@ public class ClipboardService: BidirectionalService {
     }
     
     public func handleDataPacket(_ dataPacket: DataPacket, fromDevice device: Device, onConnection connection: Connection) -> Bool {
+        guard dataPacket.isClipboardPacket || dataPacket.isClipboardConnectPacket else { return false }
+        // Catch a local copy in the interval between timer ticks before deciding
+        // which side has the freshest clipboard.
+        checkPasteboard()
         switch dataPacket.type {
         case DataPacket.clipboardPacketType:
-            guard incomingEnabled else { return true }
-            guard let contents = try? dataPacket.getContent() else { return true }
+            guard incomingEnabled else {
+                logDecision("ignored", device: device, reason: "incoming_disabled")
+                return true
+            }
+            guard let contents = try? dataPacket.getContent() else {
+                logDecision("ignored", device: device, reason: "invalid_content")
+                return true
+            }
             let senderTimestamp = (try? dataPacket.getTimestamp()) ?? Date()
             applyExternalClipboard(contents, from: device, timestamp: senderTimestamp)
             return true
         case DataPacket.clipboardConnectPacketType:
-            guard incomingEnabled else { return true }
-            guard let contents = try? dataPacket.getContent() else { return true }
+            guard incomingEnabled else {
+                logDecision("ignored", device: device, reason: "incoming_disabled")
+                return true
+            }
+            guard let contents = try? dataPacket.getContent() else {
+                logDecision("ignored", device: device, reason: "invalid_content")
+                return true
+            }
             let remoteTimestamp = (try? dataPacket.getTimestamp()) ?? Date(timeIntervalSince1970: 0)
-            guard remoteTimestamp.timeIntervalSince1970 > 0 else { return true }
-            if remoteTimestamp > lastLocalChangeTimestamp {
+            let remoteMilliseconds = ClipboardSyncState.milliseconds(remoteTimestamp)
+            if syncState.shouldAcceptConnect(timestampMilliseconds: remoteMilliseconds) {
                 applyExternalClipboard(contents, from: device, timestamp: remoteTimestamp)
+            } else {
+                Diagnostics.record("clipboard.connect_ignored", fields: [
+                    "device": Diagnostics.peer(device.id), "reason": "remote_not_newer",
+                    "remote_timestamp_ms": String(remoteMilliseconds),
+                    "local_timestamp_ms": String(syncState.timestampMilliseconds)
+                ])
             }
             return true
         default:
@@ -80,6 +106,7 @@ public class ClipboardService: BidirectionalService {
     
     public func setup(for device: Device) {
         guard !self.devices.contains(where: { $0.id == device.id }) else { return }
+        checkPasteboard()
         
         self.devices.append(device)
         
@@ -87,12 +114,12 @@ public class ClipboardService: BidirectionalService {
         // can decide which side has the newer content
         if let items = NSPasteboard.general.readObjects(forClasses: [NSString.self], options: nil),
            let content = items.first as? String {
-            send(DataPacket.clipboardConnectPacket(withContent: content, timestamp: self.lastLocalChangeTimestamp), to: device)
+            send(DataPacket.clipboardConnectPacket(withContent: content, timestamp: currentTimestamp), to: device)
+            logDecision(outgoingEnabled ? "connect_sent" : "ignored", device: device,
+                        reason: outgoingEnabled ? "new_connection" : "outgoing_disabled")
         }
-        
-        if self.monitoringTimer == nil {
-            self.startMonitoring()
-        }
+        Diagnostics.record("clipboard.peer_added", fields: ["device": Diagnostics.peer(device.id), "count": String(devices.count),
+                                                           "incoming": String(incomingEnabled), "outgoing": String(outgoingEnabled)])
     }
     
     public func cleanup(for device: Device) {
@@ -100,9 +127,7 @@ public class ClipboardService: BidirectionalService {
         
         self.devices.remove(at: index)
         
-        if self.devices.count == 0 {
-            self.stopMonitoring()
-        }
+        Diagnostics.record("clipboard.peer_removed", fields: ["device": Diagnostics.peer(device.id), "count": String(devices.count)])
     }
     
     public func actions(for device: Device) -> [ServiceAction] {
@@ -122,28 +147,28 @@ public class ClipboardService: BidirectionalService {
         self.monitoringTimer = Timer.compatScheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.checkPasteboard()
         }
+        if let monitoringTimer { RunLoop.main.add(monitoringTimer, forMode: .common) }
     }
     
-    private func stopMonitoring() {
-        self.monitoringTimer?.invalidate()
-        self.monitoringTimer = nil
+    private var currentTimestamp: Date {
+        Date(timeIntervalSince1970: Double(syncState.timestampMilliseconds) / 1000)
     }
     
     private func checkPasteboard() {
-        guard NSPasteboard.general.changeCount != self.lastChangeCount else { return }
+        guard syncState.observeLocalChange(NSPasteboard.general.changeCount) else { return }
+        Diagnostics.record("clipboard.local_changed", level: .debug, fields: [
+            "change_count": String(syncState.changeCount), "timestamp_ms": String(syncState.timestampMilliseconds), "count": String(devices.count)
+        ])
+        // Non-text changes still advance freshness, preventing a stale remote
+        // text clipboard from replacing a newly copied image or file.
         guard let items = NSPasteboard.general.readObjects(forClasses: [ NSString.self ], options: nil) else { return }
         guard items.count > 0 else { return }
         guard let content = items[0] as? String else { return }
         
-        self.lastChangeCount = NSPasteboard.general.changeCount
-        let isExternalChange = (self.lastChangeCount == self.lastExternalChangeCount)
-        if !isExternalChange {
-            self.lastLocalChangeTimestamp = Date()
-        }
-        
         for device in self.devices {
-            guard !(self.lastChangeCount == self.lastExternalChangeCount && self.lastExternalChangeDevice === device) else { continue }
-            send(DataPacket.clipboardPacket(withContent: content, timestamp: self.lastLocalChangeTimestamp), to: device)
+            send(DataPacket.clipboardPacket(withContent: content, timestamp: currentTimestamp), to: device)
+            logDecision(outgoingEnabled ? "sent" : "ignored", device: device,
+                        reason: outgoingEnabled ? "local_change" : "outgoing_disabled")
         }
     }
     
@@ -152,11 +177,23 @@ public class ClipboardService: BidirectionalService {
     ///   so that future `clipboard.connect` packets carry the original creation time rather than
     ///   our receive time, preventing the peer from seeing a "newer" timestamp on every reconnect.
     private func applyExternalClipboard(_ content: String, from device: Device, timestamp: Date = Date()) {
-        self.lastExternalChangeDevice = device
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([content as NSString])
-        self.lastExternalChangeCount = NSPasteboard.general.changeCount
-        self.lastLocalChangeTimestamp = timestamp
+        guard NSPasteboard.general.writeObjects([content as NSString]) else {
+            Diagnostics.record("clipboard.write_failed", level: .error, fields: ["device": Diagnostics.peer(device.id)])
+            return
+        }
+        syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: ClipboardSyncState.milliseconds(timestamp))
+        logDecision("applied", device: device, reason: "remote_change")
+        // Relay explicitly; marking the remote change observed prevents echoing
+        // it back to its sender on the next timer tick.
+        for peer in devices where peer.id != device.id {
+            send(DataPacket.clipboardPacket(withContent: content, timestamp: currentTimestamp), to: peer)
+        }
+    }
+
+    private func logDecision(_ result: String, device: Device, reason: String) {
+        Diagnostics.record("clipboard.\(result)", fields: ["device": Diagnostics.peer(device.id), "reason": reason,
+                                                         "timestamp_ms": String(syncState.timestampMilliseconds)])
     }
 }
 
@@ -221,7 +258,9 @@ fileprivate extension DataPacket {
         guard isClipboardPacket || isClipboardConnectPacket else { throw ClipboardError.wrongType }
         guard body.keys.contains(ClipboardProperty.timestamp.rawValue) else { throw ClipboardError.invalidTimestamp }
         guard let value = body[ClipboardProperty.timestamp.rawValue] as? NSNumber else { throw ClipboardError.invalidTimestamp }
-        return Date(timeIntervalSince1970: value.doubleValue / 1000)
+        let milliseconds = value.doubleValue
+        guard milliseconds.isFinite, milliseconds >= 0, milliseconds < Double(Int64.max) else { throw ClipboardError.invalidTimestamp }
+        return Date(timeIntervalSince1970: milliseconds / 1000)
     }
     
     func validateClipboardType() throws {

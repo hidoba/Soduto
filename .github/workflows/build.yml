@@ -1,0 +1,49 @@
+name: Build and reliability tests
+
+on:
+  push:
+    branches: [codex/reliability-diagnostics, nightly]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Reliability regression tests
+        run: swift test
+      - name: Clipboard service integration regression tests
+        run: python3 scripts/test-clipboard-service.py
+      - name: Build application and extensions
+        run: |
+          mkdir -p build
+          xcodebuild -version
+          xcodebuild -project Soduto.xcodeproj -scheme Soduto -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \
+            BUNDLE_ID=com.hidoba.Soduto SODUTO_SOURCE_REVISION="$GITHUB_SHA" \
+            build 2>&1 | tee build/xcodebuild.log
+      - name: Package unsigned build
+        run: |
+          ditto -c -k --keepParent build/DerivedData/Build/Products/Release/Soduto.app build/Soduto-unsigned.zip
+          shasum -a 256 build/Soduto-unsigned.zip > build/Soduto-unsigned.zip.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soduto-build-${{ github.sha }}
+          path: |
+            build/xcodebuild.log
+            build/Soduto-unsigned.zip
+            build/Soduto-unsigned.zip.sha256
+          retention-days: 14

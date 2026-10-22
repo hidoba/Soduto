@@ -10,21 +10,28 @@ import Foundation
 import Sparkle
 import UserNotifications
 import os
+import AppKit
 
 private let sparkleUpdateNotificationID = "com.soduto.Soduto.UpdateAvailable"
 
 final class UpdateManager: NSObject {
 
-    private(set) lazy var updaterController: SPUStandardUpdaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)
+    static var isForkBuild: Bool { Bundle.main.object(forInfoDictionaryKey: "SodutoForkBuild") as? Bool ?? false }
+
+    private(set) lazy var updaterController: SPUStandardUpdaterController = SPUStandardUpdaterController(startingUpdater: !Self.isForkBuild, updaterDelegate: self, userDriverDelegate: self)
 
     var automaticallyChecksForUpdates: Bool {
-        get { updaterController.updater.automaticallyChecksForUpdates }
-        set { updaterController.updater.automaticallyChecksForUpdates = newValue }
+        get { !Self.isForkBuild && updaterController.updater.automaticallyChecksForUpdates }
+        set { if !Self.isForkBuild { updaterController.updater.automaticallyChecksForUpdates = newValue } }
     }
 
     override init() {
         super.init()
-        _ = updaterController
+        if !Self.isForkBuild { _ = updaterController }
+    }
+
+    @objc func openForkReleases(_ sender: Any?) {
+        NSWorkspace.shared.open(URL(string: "https://github.com/hidoba/Soduto/releases")!)
     }
 }
 

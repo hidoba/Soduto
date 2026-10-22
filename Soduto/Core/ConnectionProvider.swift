@@ -21,6 +21,7 @@ public protocol ConnectionProviderDelegate: AnyObject {
     func isNewConnectionNeeded(byProvider provider: ConnectionProvider, deviceId: String) -> Bool
     func connectionProvider(_ provider: ConnectionProvider, didCreateConnection: Connection)
     func connectionProvider(_ provider: ConnectionProvider, probeConnectionsFor deviceId: String)
+    func connectionProviderWillRestart(_ provider: ConnectionProvider, reason: String)
 }
 
 public class ConnectionProvider: NSObject, ConnectionDelegate {
@@ -39,6 +40,8 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     private let pathMonitorQueue: DispatchQueue = DispatchQueue(label: "com.soduto.NetworkMonitor")
     private var pendingConnections: Set<Connection> = Set<Connection>()
     private var isStarted: Bool = false
+    private var monitoringStarted = false
+    private var restartWork: DispatchWorkItem?
     
     /// Timestamp when network services were last started (for cooldown).
     private var lastStartTime: Date?
@@ -81,10 +84,17 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
         
         self.pathMonitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
+                guard let self, self.monitoringStarted else { return }
+                Diagnostics.record("network.path_changed", fields: [
+                    "available": String(path.status == .satisfied),
+                    "interfaces": path.availableInterfaces.map { String(describing: $0.type) }.sorted().joined(separator: ","),
+                    "expensive": String(path.isExpensive), "constrained": String(path.isConstrained),
+                    "ipv4": String(path.supportsIPv4), "ipv6": String(path.supportsIPv6)
+                ])
                 if path.status == .satisfied {
-                    self?.becameReachable()
+                    self.becameReachable()
                 } else {
-                    self?.becameUnreachable()
+                    self.becameUnreachable()
                 }
             }
         }
@@ -101,6 +111,8 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     }
     
     public func start() {
+        monitoringStarted = true
+        Diagnostics.record("network.monitor_started")
         // Only start monitoring network reachability.
         // Actual network services (UDP, TCP, mDNS) are started by becameReachable()
         // when NWPathMonitor confirms the network is available.
@@ -108,12 +120,23 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     }
     
     public func stop() {
+        monitoringStarted = false
+        restartWork?.cancel()
+        restartWork = nil
         self.pathMonitor.cancel()
         stopNetworkServices()
     }
     
-    public func restart() {
+    public func restart(reason: String = "manual") {
         guard self.isStarted else { return }
+        restartWork?.cancel()
+        restartWork = nil
+        Diagnostics.record("network.restarting", fields: ["reason": reason, "pending": String(pendingConnections.count)])
+        delegate?.connectionProviderWillRestart(self, reason: reason)
+        // Pending handshakes belong to the old network too.
+        let pending = pendingConnections
+        pendingConnections.removeAll()
+        pending.forEach { $0.close() }
         stopNetworkServices()
         startNetworkServices()
     }
@@ -131,6 +154,8 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
         startTcpServer()
         
         self.isStarted = true
+        Diagnostics.record("network.services_started", level: tcpListeningPort > 0 && udpChannel?.isActive == true ? .info : .error,
+                           fields: ["tcp_port": String(tcpListeningPort), "available": String(udpChannel?.isActive == true)])
         
         // Start mDNS discovery after TCP server is ready
         startMDNS()
@@ -141,6 +166,7 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     
     /// Stops all network services.
     private func stopNetworkServices() {
+        Diagnostics.record("network.services_stopping")
         self.isStarted = false
         stopMDNS()
         stopUdp()
@@ -441,9 +467,11 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     
     /// Stops the UDP channels.
     private func stopUdp() {
-        self.udpChannel?.close(promise: nil)
+        // These lifecycle methods run on the main queue. Await socket closure
+        // before rebinding, avoiding wake/reconnect races with the old listener.
+        try? self.udpChannel?.close().wait()
         self.udpChannel = nil
-        self.broadcastChannel?.close(promise: nil)
+        try? self.broadcastChannel?.close().wait()
         self.broadcastChannel = nil
     }
     
@@ -464,6 +492,7 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     /// Handles incoming UDP packet.
     fileprivate func handleUdpPacket(data: Data, remoteAddress: NIOCore.SocketAddress) {
         guard let packet = DataPacket(data: data) else {
+            Diagnostics.record("discovery.udp_discarded", level: .debug, fields: ["bytes": String(data.count), "reason": "invalid_packet"])
             Logger.network.debug("UDP: discarding \(data.count, privacy: .public) byte datagram from \(String(describing: remoteAddress), privacy: .public): not a valid packet")
             return
         }
@@ -489,6 +518,14 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
             Logger.network.notice("UDP: discarding identity from \(deviceId, privacy: .public): missing tcpPort")
             return
         }
+        guard RecoveryPolicy.isValidTCPPort(Int(port)) else {
+            Diagnostics.record("discovery.udp_discarded", level: .warning,
+                               fields: ["device": Diagnostics.peer(deviceId), "reason": "invalid_tcp_port"])
+            return
+        }
+        Diagnostics.record("discovery.udp_received", level: .debug, fields: [
+            "device": Diagnostics.peer(deviceId), "bytes": String(data.count), "tcp_port": String(port)
+        ])
         guard let delegate = self.delegate else {
             Logger.network.error("UDP: discarding identity from \(deviceId, privacy: .public): no delegate")
             return
@@ -505,6 +542,7 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
                     return
                 }
                 self.lastProbeTimes[deviceId] = Date()
+                Diagnostics.record("connection.probe_requested", fields: ["device": Diagnostics.peer(deviceId), "reason": "peer_announced_while_connected"])
                 Logger.network.info("UDP: identity from \(deviceId, privacy: .public) while considered connected — probing existing connections")
                 self.delegate?.connectionProvider(self, probeConnectionsFor: deviceId)
             }
@@ -535,22 +573,8 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
             Logger.network.debug("Created outgoing connection to \(address.description, privacy: .public)")
             connection.delegate = self
             self.pendingConnections.insert(connection)
-            
-            // Send initial (pre-TLS) identity packet.
-            // For v8 peers, add targetDeviceId/targetProtocolVersion to the full identity
-            // packet, matching the Android KDE Connect implementation. The full identity
-            // is sent again post-TLS (the post-TLS version is the one that's trusted).
-            let peerVersion = (try? packet.getProtocolVersion()) ?? 7
-            if peerVersion >= 8,
-               let targetDeviceId = try? packet.getDeviceId() {
-                let additionalProps: DataPacket.Body = [
-                    DataPacket.IdentityProperty.targetDeviceId.rawValue: targetDeviceId as AnyObject,
-                    DataPacket.IdentityProperty.targetProtocolVersion.rawValue: NSNumber(value: peerVersion)
-                ]
-                _ = connection.send(DataPacket.identityPacket(additionalProperties: additionalProps, config: self.config))
-            } else {
-                _ = connection.send(DataPacket.identityPacket(config: self.config))
-            }
+            // Connection sends the initial identity after TCP completion. Sending
+            // here races the async bootstrap and can silently lose the handshake.
         } else {
             Logger.network.error("Failed to create outgoing connection")
         }
@@ -630,7 +654,7 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     
     /// Stops the TCP server.
     private func stopTcpServer() {
-        self.tcpServerChannel?.close(promise: nil)
+        try? self.tcpServerChannel?.close().wait()
         self.tcpServerChannel = nil
         self.tcpListeningPort = 0
     }
@@ -705,7 +729,15 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
         // Create connection from the accepted channel
         if let connection = Connection(channel: channel, config: self.config, eventLoopGroup: group) {
             connection.delegate = self
-            self.pendingConnections.insert(connection)
+            // Pipeline setup must stay on NIO's event loop; ownership of the
+            // provider's collection stays on main, like outgoing connections.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.monitoringStarted, self.isStarted, connection.state != .Closed else {
+                    connection.close()
+                    return
+                }
+                self.pendingConnections.insert(connection)
+            }
             
             // Read initial identity packet
             connection.readOnePacket()
@@ -722,30 +754,35 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
         NotificationCenter.default.post(name: ConnectionProvider.networkBecameReachableNotification, object: self)
         
         if self.isStarted {
-            // Check cooldown to avoid race conditions from rapid NWPathMonitor callbacks
-            if let lastStart = self.lastStartTime,
-               Date().timeIntervalSince(lastStart) < ConnectionProvider.restartCooldown {
-                // Schedule restart after cooldown expires
-                let delay = ConnectionProvider.restartCooldown - Date().timeIntervalSince(lastStart)
-                Logger.network.debug("Network services recently started, delaying restart by \(delay, privacy: .public)s")
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    self?.restart()
-                }
-                return
+            // Coalesce rapid path changes into one restart. Cancelled work must
+            // not restart a provider that was stopped or superseded by wake.
+            restartWork?.cancel()
+            let delay = RecoveryPolicy.restartDelay(lastStart: lastStartTime)
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.monitoringStarted else { return }
+                self.restart(reason: "path_changed")
             }
-            
-            // Network changed (e.g., WiFi → Ethernet) - restart to pick up new interfaces
-            Logger.network.debug("Network change detected - restarting network services")
-            stopNetworkServices()
+            restartWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return
         }
         
         startNetworkServices()
     }
     
     private func becameUnreachable() {
+        restartWork?.cancel()
+        restartWork = nil
+        Diagnostics.record("network.unavailable")
         Logger.network.debug("Network became unreachable")
         // Optionally stop services when network is down
         // For now, keep them running - they'll fail gracefully and resume when network returns
+    }
+
+    func diagnosticSnapshot() -> [String: Any] {
+        ["started": isStarted, "monitoring": monitoringStarted, "tcp_port": tcpListeningPort,
+         "udp_active": udpChannel?.isActive ?? false, "tcp_active": tcpServerChannel?.isActive ?? false,
+         "pending_handshakes": pendingConnections.map { $0.diagnosticFields }]
     }
     
 }
@@ -761,11 +798,13 @@ extension ConnectionProvider: MDNSDiscoveryProviderDelegate {
         // Check if we need a new connection to this device
         guard let delegate = self.delegate else { return }
         guard delegate.isNewConnectionNeeded(byProvider: self, deviceId: deviceId) else {
+            Diagnostics.record("discovery.mdns_skipped", level: .debug, fields: ["device": Diagnostics.peer(deviceId), "reason": "already_connected"])
             Logger.network.debug("mDNS: Connection to \(deviceId, privacy: .public) not needed")
             return
         }
         
         Logger.network.debug("mDNS: Triggering connection to \(deviceId, privacy: .public) at \(address, privacy: .public)")
+        Diagnostics.record("discovery.mdns_resolved", fields: ["device": Diagnostics.peer(deviceId), "tcp_port": String(port)])
         
         // Send UDP identity packet to trigger normal connection flow
         // This is the recommended approach per KDE Connect protocol spec
@@ -804,11 +843,15 @@ private final class UdpHandler: ChannelInboundHandler {
         let packetData = Data(bytes)
         
         // Forward to connection provider
-        connectionProvider?.handleUdpPacket(data: packetData, remoteAddress: remoteAddress)
+        // DeviceManager and provider lifecycle state are main-queue confined.
+        DispatchQueue.main.async { [weak connectionProvider] in
+            connectionProvider?.handleUdpPacket(data: packetData, remoteAddress: remoteAddress)
+        }
     }
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         Logger.network.error("UDP channel error: \(error, privacy: .public)")
+        Diagnostics.record("network.udp_error", level: .error, fields: Diagnostics.errorFields(error))
     }
 }
 

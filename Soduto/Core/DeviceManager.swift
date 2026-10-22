@@ -93,6 +93,20 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
     public func connectionProvider(_ provider: ConnectionProvider, probeConnectionsFor deviceId: Device.Id) {
         self.devices[deviceId]?.probeConnections()
     }
+
+    public func connectionProviderWillRestart(_ provider: ConnectionProvider, reason: String) {
+        Diagnostics.record("device.connections_reset", fields: ["reason": reason, "count": String(devices.count)])
+        closeAllConnections()
+    }
+
+    func diagnosticSnapshot() -> [String: Any] {
+        ["reachable_count": pairedRechableDevices.count, "unavailable_count": unavailableDevices.count,
+         "devices": devices.values.map { device in
+             ["device": Diagnostics.peer(device.id), "paired": device.pairingStatus == .Paired,
+              "reachable": device.isReachable, "incoming_capabilities": device.incomingCapabilities.sorted(),
+              "outgoing_capabilities": device.outgoingCapabilities.sorted()] as [String: Any]
+         }]
+    }
     
     public func connectionProvider(_ provider: ConnectionProvider, didCreateConnection connection: Connection) {
         Logger.device.debug("connectionProvider(<\(provider, privacy: .public)> didCreateConnection:<\(connection, privacy: .public)>)")
@@ -182,6 +196,8 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
     
     
     public func device(_ device: Device, didChangeReachabilityStatus isReachable: Bool) {
+        Diagnostics.record("device.reachability_changed", fields: ["device": Diagnostics.peer(device.id),
+                                                                 "reachable": String(isReachable), "paired": String(device.pairingStatus == .Paired)])
         Logger.device.debug("device(<\(device, privacy: .public)> didChangeReachabilityStatus:<\(isReachable, privacy: .public)>)")
         
         if device.pairingStatus == .Paired {

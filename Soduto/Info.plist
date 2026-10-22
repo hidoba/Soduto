@@ -37,7 +37,11 @@
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SodutoForkBuild</key>
 	<true/>
+	<key>SodutoSourceRevision</key>
+	<string>$(SODUTO_SOURCE_REVISION)</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>43200</integer>
 	<key>SUPublicEDKey</key>

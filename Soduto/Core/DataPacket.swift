@@ -272,7 +272,11 @@ extension DataPacket {
     public func getTCPPort() throws -> UInt16 {
         try self.validateIdentityType()
         guard let tcpPort = body[IdentityProperty.tcpPort.rawValue] as? NSNumber else { throw IdentityError.invalidTCPPort }
-        return tcpPort.uint16Value
+        // NSNumber.uint16Value silently wraps hostile/invalid port values.
+        let value = tcpPort.doubleValue
+        guard value.isFinite, value.rounded(.towardZero) == value,
+              value >= 1716, value <= 1764 else { throw IdentityError.invalidTCPPort }
+        return UInt16(value)
     }
     
     public func getIncomingCapabilities() throws -> Set<Service.Capability> {
