@@ -1,3 +1,28 @@
+# Soduto — hidoba fork
+
+A macOS KDE Connect client focused on reliable reconnects and useful diagnostics.
+This fork combines upstream `fix/network-reliability` and `feat/refine-services`,
+then fixes offline clipboard freshness, outgoing TCP handshake ordering, wake
+recovery, invalid port handling, and connection lifecycle races.
+
+- **Source:** [hidoba/Soduto](https://github.com/hidoba/Soduto), default development branch `codex/reliability-diagnostics`.
+- **Diagnostics:** menu → **Diagnostics → Export Diagnostic Bundle…**.
+- **Builds:** [GitHub Actions](https://github.com/hidoba/Soduto/actions/workflows/build.yml) produces an unsigned app ZIP and checksum after tests and a full Xcode build.
+- **Updates:** this fork uses manual releases; automatic upstream Sparkle updates are disabled.
+- **Requirements:** macOS 14+, Xcode 26+ to build. On Ubuntu GNOME/Wayland, GSConnect v74+ is recommended.
+- **Status:** development build; real-device sleep/wake and Wi-Fi tests remain part of release qualification.
+
+Read [diagnostics and testing](docs/diagnostics.md) for capture instructions, privacy,
+log retention, regression checks and the real-device test matrix. The app has its
+own bundle ID (`com.hidoba.Soduto`), preferences, and keychain identity names;
+pair it as a new device. Run one Mac KDE Connect client at a time when testing.
+
+Credits: this is based on [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto)
+and the original [soduto/Soduto](https://github.com/soduto/Soduto). The original
+GPL license and attribution remain in place.
+
+---
+
 <div align="center">
   <img src="Soduto/App Icons/Soduto.png" alt="Soduto Logo" width="200"/>
   <h1 style="font-weight: 700; font-size: 4em; margin: 0; padding-top: 0;">Soduto</h1>
@@ -23,8 +48,6 @@
 - [Building](#building)
 - [Debugging](#debugging)
 - [Verifying Downloads](#verifying-downloads)
-  - [Signing Identity](#-signing-identity)
-  - [Verification Steps](#verification-steps)
 - [Limitations](#limitations)
   - [Clipboard Sync (Android 10+)](#clipboard-sync-android-10)
   - [Storage Access (Android 11+)](#storage-access-android-11)
@@ -41,17 +64,16 @@
 ---
 ## Installation
 
-To install builds of Soduto from this repository, head to the [Releases Page](https://github.com/sannidhyaroy/soduto/releases/latest) and download the [`.dmg`](https://github.com/sannidhyaroy/Soduto/releases/latest/download/Soduto.Nightly.dmg) file. As an optional step, you may head over to the [Verifying Downloads](#verifying-downloads) section if you wish to verify its integrity and cryptographic signature. Open it and you might get a pop-up window containing the license. Tap agree if you've read it and wish to continue. Then drag `Soduto.app` onto the Applications Folder. When running for the first time, you might get a prompt saying that macOS can't run apps from an unidentified developer. Pick any one of the following options to continue:
-- Go to `System Preferences → Privacy & Security` and find `Soduto` was blocked message, then tap `Open Anyway` and follow the on-screen instructions.
-- Remove the quarantine flag from the downloaded [`.dmg`](https://github.com/sannidhyaroy/Soduto/releases/latest/download/Soduto.Nightly.dmg) file before opening it: 
-  ```bash
-  xattr -d com.apple.quarantine <path to your dmg directory>/Soduto.Nightly.dmg
-  ```
-- On macOS (14) Sonoma and earlier, you can press and hold `control` and click on the app icon. While still holding `Control`, select `Open`.
+Until a signed release is published, download a successful build's
+`Soduto-unsigned.zip` artifact from [GitHub Actions](https://github.com/hidoba/Soduto/actions/workflows/build.yml),
+or build locally using the instructions below. These artifacts are unsigned
+and not notarized. They are intended for testing, not an automatic installation.
+For a normal signed development build, use Xcode and your own Apple Developer
+team via `LocalConfig.xcconfig`.
 
-The official build of Soduto can be downloaded from [soduto.com](https://www.soduto.com) or from [Soduto's official repository](https://github.com/soduto/Soduto). You may find support for the official build in [Soduto's official repository](https://github.com/soduto/Soduto), so only post issues [here](https://github.com/sannidhyaroy/Soduto/issues) related to the builds of this repository.
-
-Please note that currently there's no brew cask for Soduto builds of this repository and the only source is the [Releases Page](https://github.com/sannidhyaroy/soduto/releases/latest) of this repository. Installation is a one-time process, and future upgrades are handled in-app using [Sparkle](https://sparkle-project.org/).
+This fork uses manual updates from [our releases](https://github.com/hidoba/Soduto/releases).
+The app's **Fork Releases on GitHub…** item opens that page. Upstream Sparkle
+updates cannot replace this build automatically.
 
 ---
 ## Roadmap
@@ -259,64 +281,17 @@ sudo log config --subsystem com.soduto.Soduto.Soduto-Share --mode level:default
 
 ---
 ## Verifying Downloads
-All releases published onwards `v2.0.0` in this repository are cryptographically signed.
-This allows you to verify that a downloaded release was published by the Soduto project and was not modified after publication.
 
-This step is **optional** and intended for users who want additional security guarantees.
+Each successful CI build includes `Soduto-unsigned.zip.sha256` beside the app
+archive. Verify the download with:
 
-- The signing key is **not stored in this repository**.
-- The canonical source of truth for the signing key is the project domain.
-- The same key is discoverable automatically via standard OpenPGP mechanisms.
-- The DMG itself is not signed with GPG. Instead, the checksum file is signed to verify authenticity and integrity.
-- Sparkle handles update security separately.
-- Most users do not need to perform these steps, unless they wish to manually verify downloads.
+```sh
+shasum -a 256 -c Soduto-unsigned.zip.sha256
+```
 
-
-### 🔑 Signing Identity
-**Signed by**: _Soduto Releases (Soduto Release Signing Key)_ _`releases@soduto.thenoton.com`_
-
-**Key fingerprint:** _`4951 D786 1266 F77E A86D  2B3C D952 D26C 5D6D 9D22`_
-
-You can use the fingerprint above to manually verify that you have obtained the correct public key.
-
-### Verification steps:
-- The easiest way is to let GPG locate the key automatically.
-  ```bash
-  gpg --locate-keys releases@soduto.thenoton.com
-  ```
-
-  <details><summary>Not Working? 🥲</summary>
-
-  #### Try any of the following methods:
-
-  - Force **Web Key Directory (WKD)** (recommended):
-    ```bash
-    gpg --locate-keys --auto-key-locate wkd releases@soduto.thenoton.com
-    ```
-  - Force a **public keyserver lookup** (email-verified at [keys.openpgp.org](https://keys.openpgp.org)):
-    ```bash
-    gpg --locate-keys --keyserver hkps://keys.openpgp.org releases@soduto.thenoton.com
-    ```
-  - Final fallback - manual import:
-    ```bash
-    curl -o soduto-release-signing-key.asc https://raw.githubusercontent.com/sannidhyaroy/soduto-releases/refs/heads/main/.well-known/openpgpkey/hu/i4cdqgcarfjdjnba6y4jnf498asg8c6p
-    gpg --import soduto-release-signing-key.asc
-    ```
-
-  </details>
-- Download the [`.dmg`](https://github.com/sannidhyaroy/Soduto/releases/latest/download/Soduto.Nightly.dmg) file, the [`.dmg.sha256`](https://github.com/sannidhyaroy/Soduto/releases/latest/download/Soduto.Nightly.dmg.sha256) file and the [`.dmg.sha256.asc`](https://github.com/sannidhyaroy/Soduto/releases/latest/download/Soduto.Nightly.dmg.sha256.asc) file.
-- Open the directory where you downloaded the `.dmg` file, and run the following commands:
-  ```bash
-  gpg --verify Soduto-X.Y.Z.dmg.sha256.asc  # Enter correct path to the .dmg.sha256.asc file
-  shasum -a 256 -c Soduto-X.Y.Z.dmg.sha256  # Enter correct path to the .dmg.sha256 file
-  ```
-  Expected output includes:
-  ```
-  Good signature from "Soduto Releases <releases@soduto.thenoton.com>"
-  ```
-  This confirms that:
-  - The checksum file (`.dmg.sha256`) was signed by the Soduto Release Signing Key.
-  - The downloaded `.dmg` matches the published SHA-256 checksum.
+The checksum detects accidental changes; it is not a signing/notarization claim.
+The upstream release signing key does not authenticate fork artifacts. Source
+revision and build logs are attached to each workflow run.
 
 ---
 ## Limitations

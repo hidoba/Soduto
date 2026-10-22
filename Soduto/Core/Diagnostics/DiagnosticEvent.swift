@@ -16,7 +16,7 @@ struct DiagnosticEvent: Codable {
     static let allowedFields: Set<String> = [
         "connection", "device", "packet_type", "packet_id", "bytes", "payload_bytes",
         "state", "previous_state", "reason", "phase", "protocol", "direction",
-        "error_domain", "error_code", "elapsed_ms", "available", "interfaces",
+        "error_domain", "error_code", "error_type", "error_case", "elapsed_ms", "available", "interfaces",
         "expensive", "constrained", "ipv4", "ipv6", "tcp_port", "pending",
         "paired", "reachable", "unavailable", "app_version", "build", "os_version",
         "architecture", "enabled", "count", "incoming", "outgoing", "service",

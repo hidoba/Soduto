@@ -48,8 +48,14 @@ final class Diagnostics: NSObject {
     }
 
     static func errorFields(_ error: Error) -> [String: String] {
-        let error = error as NSError
-        return ["error_domain": error.domain, "error_code": String(error.code)]
+        let nsError = error as NSError
+        var fields = ["error_domain": nsError.domain, "error_code": String(nsError.code),
+                      "error_type": String(reflecting: type(of: error))]
+        // Enum case labels identify failures such as handshakeFailed without
+        // serializing associated values (which may contain paths or payloads).
+        let mirror = Mirror(reflecting: error)
+        if mirror.displayStyle == .enum, let label = mirror.children.first?.label { fields["error_case"] = label }
+        return fields
     }
 
     static func packet(_ direction: String, type: String, id: Int64, bytes: Int,
@@ -101,6 +107,7 @@ final class Diagnostics: NSObject {
 
     @objc private func exportDiagnostics(_ sender: Any?) {
         guard !exporting else { return }
+        exporting = true
         let panel = NSSavePanel()
         panel.title = "Export Soduto Diagnostics"
         panel.message = "Includes connection events and packet metadata. Clipboard text, messages, file contents and keys are excluded."
@@ -109,50 +116,25 @@ final class Diagnostics: NSObject {
         panel.nameFieldStringValue = "Soduto-Diagnostics-\(stamp).zip"
         NSApp.activate(ignoringOtherApps: true)
         panel.begin { [weak self] response in
-            guard let self, response == .OK, let destination = panel.url else { return }
-            self.exporting = true
+            guard let self else { return }
+            guard response == .OK, let destination = panel.url else { self.exporting = false; return }
             let scoped = destination.startAccessingSecurityScopedResource()
             var summary = self.snapshotProvider?() ?? [:]
             summary["session"] = self.store.session
             summary["packet_tracing"] = self.packetTracingEnabled
             summary["source_revision"] = Bundle.main.object(forInfoDictionaryKey: "SodutoSourceRevision") as? String ?? "unknown"
             if let error = self.store.lastError { summary["journal_error"] = Self.errorFields(error) }
+            let baseSummary = summary
             Self.record("diagnostics.export_started")
             DispatchQueue.global(qos: .utility).async {
-                let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
                 do {
-                    let bundle = temporary.appendingPathComponent("Soduto-Diagnostics", isDirectory: true)
-                    let files = try self.store.snapshot(to: bundle)
-                    summary["log_files"] = files
-                    let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
-                    try data.write(to: bundle.appendingPathComponent("summary.json"), options: .atomic)
-                    try """
-                    Soduto diagnostics — hidoba/Soduto
-                    Events are newline-delimited JSON. Match session + connection + device aliases.
-                    Files are newest first: events.jsonl, events.1.jsonl, etc. Sessions survive restarts.
-                    Device aliases change each launch. No clipboard/message bodies, paths, addresses or keys are recorded.
-                    summary.json describes app, network and device state at export time.
-                    The journal retains up to four 5 MiB files. Detailed packet logging is on by default.
-                    System Console logs are intentionally excluded: older upstream debug statements may contain personal data.
-                    """.write(to: bundle.appendingPathComponent("README.txt"), atomically: true, encoding: .utf8)
-                    let archive = temporary.appendingPathComponent("diagnostics.zip")
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-                    process.arguments = ["-c", "-k", "--keepParent", bundle.path, archive.path]
-                    process.standardOutput = FileHandle.nullDevice
-                    process.standardError = FileHandle.nullDevice
-                    try process.run()
-                    process.waitUntilExit()
-                    guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
-                    // Atomic replacement is handled by Data.write and the save-panel sandbox grant.
-                    try Data(contentsOf: archive).write(to: destination, options: .atomic)
-                    Self.record("diagnostics.export_finished", fields: ["count": String(files.count)])
+                    let count = try DiagnosticBundleExporter.export(store: self.store, summary: baseSummary, to: destination)
+                    Self.record("diagnostics.export_finished", fields: ["count": String(count)])
                     DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting([destination]) }
                 } catch {
                     Self.record("diagnostics.export_failed", level: .error, fields: Self.errorFields(error))
                     DispatchQueue.main.async { NSAlert(error: error).runModal() }
                 }
-                try? FileManager.default.removeItem(at: temporary)
                 DispatchQueue.main.async {
                     if scoped { destination.stopAccessingSecurityScopedResource() }
                     self.exporting = false

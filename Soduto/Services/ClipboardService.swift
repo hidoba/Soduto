@@ -37,9 +37,7 @@ public class ClipboardService: BidirectionalService {
     private var syncState = ClipboardSyncState(changeCount: NSPasteboard.general.changeCount)
     private var devices: [Device] = []
     
-    /// Timestamp of the last local clipboard change. Initialized to epoch so that
-    /// an incoming clipboard.connect from a peer (with a real timestamp) always wins
-    /// on first connect when we have no tracked change history
+    /// Start tracking immediately, including periods without a connected peer.
     public init() {
         // Track local changes while disconnected too. Otherwise a reconnect sends
         // new text with an old timestamp and a stale peer can overwrite it.

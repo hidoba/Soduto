@@ -171,7 +171,7 @@ public class DeviceConfiguration: NSObject {
     
     class func defaultCertificateName(for deviceId: String) -> String {
         let safeDeviceId = deviceId.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? "undefined-\(Configuration.generateDeviceId())"
-        return "Soduto Client (\(safeDeviceId))"
+        return "\(Bundle.main.bundleIdentifier ?? "com.hidoba.Soduto").peer.\(safeDeviceId)"
     }
     
     class func configKey(for deviceId: String) -> String {
@@ -265,7 +265,12 @@ public class Configuration: ConnectionConfiguration, DeviceManagerConfiguration,
             self.userDefaults.set(Configuration.generateDeviceId(), forKey: Property.hostDeviceId.rawValue)
         }
         if self.userDefaults.string(forKey: Property.hostCertificateName.rawValue) == nil {
-            self.userDefaults.set("Soduto Host", forKey: Property.hostCertificateName.rawValue)
+            // Keychain preferred-identity names are global, unlike UserDefaults.
+            // A fork must not reuse upstream's "Soduto Host" certificate with a
+            // different deviceId/Common Name, or delete upstream's pairing pins.
+            let namespace = Bundle.main.bundleIdentifier ?? "com.hidoba.Soduto"
+            let deviceID = self.userDefaults.string(forKey: Property.hostDeviceId.rawValue)!
+            self.userDefaults.set("\(namespace).host.\(deviceID)", forKey: Property.hostCertificateName.rawValue)
         }
     }
     
@@ -397,6 +402,7 @@ public class Configuration: ConnectionConfiguration, DeviceManagerConfiguration,
             return try CertificateUtils.getOrCreateIdentity(name, certCommonName: hostDeviceId, expirationInterval: expirationInterval)
         }
         catch {
+            Diagnostics.record("certificate.host_identity_failed", level: .error, fields: Diagnostics.errorFields(error))
             Logger.config.error("Failed to get host identity for SSL: \(error, privacy: .public)")
             return nil
         }

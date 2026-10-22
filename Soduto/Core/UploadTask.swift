@@ -396,12 +396,15 @@ public class UploadTask {
     }
     
     fileprivate func handleError(_ error: Error) {
+        Diagnostics.record("payload.upload_error", level: .error, fields: Diagnostics.errorFields(error))
         Logger.network.error("UploadTask error: \(error, privacy: .public)")
         self.uploadFinished(success: false)
     }
     
     private func uploadFinished(success: Bool) {
         guard !isClosed else { return }
+        Diagnostics.record("payload.upload_completed", level: success ? .info : .error,
+                           fields: ["tcp_port": String(listeningPort), "result": String(success)])
         
         Logger.network.debug("uploadFinished(<\(success, privacy: .public)>)")
         

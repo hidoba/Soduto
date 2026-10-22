@@ -81,6 +81,8 @@ class DevicePreferencesViewController: NSViewController {
         }
         if self.automaticCheckForUpdates != nil {
             self.automaticCheckForUpdates.state = AppDelegate.shared().updateManager.automaticallyChecksForUpdates ? .on : .off
+            self.automaticCheckForUpdates.isEnabled = !UpdateManager.isForkBuild
+            if UpdateManager.isForkBuild { self.automaticCheckForUpdates.toolTip = "This fork uses manual updates from GitHub Releases." }
         }
     }
     

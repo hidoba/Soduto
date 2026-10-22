@@ -46,9 +46,6 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     /// Timestamp when network services were last started (for cooldown).
     private var lastStartTime: Date?
     
-    /// Minimum time between network restarts to avoid race conditions.
-    private static let restartCooldown: TimeInterval = 3.0
-    
     /// Minimum time between liveness probes of the same device's connections.
     private static let probeMinInterval: TimeInterval = 5.0
     

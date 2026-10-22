@@ -113,3 +113,39 @@ final class DiagnosticLogStore {
         try openIfNeeded()
     }
 }
+
+/// Kept outside the UI so the same ZIP export used by the menu is regression-tested.
+enum DiagnosticBundleExporter {
+    @discardableResult
+    static func export(store: DiagnosticLogStore, summary: [String: Any], to destination: URL) throws -> Int {
+        let manager = FileManager.default
+        let temporary = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? manager.removeItem(at: temporary) }
+        let bundle = temporary.appendingPathComponent("Soduto-Diagnostics", isDirectory: true)
+        let files = try store.snapshot(to: bundle)
+        var summary = summary
+        summary["log_files"] = files
+        let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: bundle.appendingPathComponent("summary.json"), options: .atomic)
+        try """
+        Soduto diagnostics — hidoba/Soduto
+        Events are newline-delimited JSON. Match session + connection + device aliases.
+        Files are newest first: events.jsonl, events.1.jsonl, etc. Sessions survive restarts.
+        Device aliases change each launch. No clipboard/message bodies, paths, addresses or keys are recorded.
+        summary.json describes app, network and device state at export time.
+        The journal retains up to four 5 MiB files. Detailed packet logging is on by default.
+        System Console logs are excluded: inherited debug statements may contain personal data.
+        """.write(to: bundle.appendingPathComponent("README.txt"), atomically: true, encoding: .utf8)
+        let archive = temporary.appendingPathComponent("diagnostics.zip")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", "--keepParent", bundle.path, archive.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
+        try Data(contentsOf: archive).write(to: destination, options: .atomic)
+        return files.count
+    }
+}

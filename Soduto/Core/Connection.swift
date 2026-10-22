@@ -1029,6 +1029,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                let savedCertificate = self.config.deviceConfig(for: deviceId).certificate {
                 let validator = PostHandshakeValidator(expectedCertificate: savedCertificate)
                 if !validator.validate(peerCertificates: trustHandler.peerCertificates) {
+                    recordDiagnostic("connection.certificate_rejected", level: .error)
                     Logger.network.error("Post-handshake certificate validation failed - closing connection")
                     self.close()
                     return
