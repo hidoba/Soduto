@@ -117,7 +117,17 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
         do {
             let deviceId = try connection.identity!.getDeviceId() as Device.Id
             if let device = self.devices[deviceId] {
+                // Keep the connection represented by the verification prompt.
+                // Replacing it mid-request silently invalidates Accept/Decline.
+                if device.pairingStatus == .Requested || device.pairingStatus == .RequestedByPeer {
+                    connection.close()
+                    return
+                }
+                let wasReady = device.isReachable && device.pairingStatus == .Paired
+                if wasReady { serviceManager.cleanup(for: device) }
                 device.addConnection(connection)
+                refreshPacketHandlers(for: device)
+                if wasReady && device.pairingStatus == .Paired { serviceManager.setup(for: device) }
             }
             else if let device = self.recentDevices.removeValue(forKey: deviceId)?.device {
                 self.readdDevice(device, connection: connection)
@@ -225,7 +235,8 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
     
     /// Close all TCP connections for all devices (force reconnect)
     public func closeAllConnections() {
-        for device in self.devices.values {
+        // Closing now reports reachability synchronously on main.
+        for device in Array(self.devices.values) {
             device.closeAllConnections()
         }
     }
@@ -258,8 +269,17 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
     
     private func readdDevice(_ device: Device, connection: Connection) {
         device.addConnection(connection)
+        refreshPacketHandlers(for: device)
         device.delegate = self
         self.devices[device.id] = device
         self.device(device, didChangeReachabilityStatus: device.isReachable)
+    }
+
+    private func refreshPacketHandlers(for device: Device) {
+        // A peer can change plugins while we retain its Device during a brief
+        // outage. Rebuild dispatch from the authenticated, current identity.
+        for service in serviceManager.services { device.removeDataPacketHandler(service) }
+        let handlers: [DeviceDataPacketHandler] = serviceManager.services(supportingIncomingCapabilities: device.outgoingCapabilities)
+        device.addDataPacketHandlers(handlers)
     }
 }

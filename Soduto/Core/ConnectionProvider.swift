@@ -292,6 +292,10 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
         case .Open:
             if let delegate = self.delegate {
                 self.pendingConnections.remove(connection)
+                if let deviceID = try? connection.identity?.getDeviceId() {
+                    let redundant = pendingConnections.filter { (try? $0.identity?.getDeviceId()) == deviceID }
+                    redundant.forEach { $0.close() }
+                }
                 connection.readPackets()
                 delegate.connectionProvider(self, didCreateConnection: connection)
             } else {
@@ -561,6 +565,13 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     
     /// Creates an outgoing connection to the specified address.
     private func createOutgoingConnection(address: SocketAddress, identityPacket packet: DataPacket) {
+        guard isStarted, monitoringStarted, let deviceID = try? packet.getDeviceId(),
+              delegate?.isNewConnectionNeeded(byProvider: self, deviceId: deviceID) == true else { return }
+        guard !pendingConnections.contains(where: { (try? $0.identity?.getDeviceId()) == deviceID }) else {
+            Diagnostics.record("discovery.connection_pending", level: .debug,
+                               fields: ["device": Diagnostics.peer(deviceID)])
+            return
+        }
         guard let group = self.eventLoopGroup else {
             Logger.network.error("No event loop group available for outgoing connection")
             return

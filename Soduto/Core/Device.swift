@@ -70,8 +70,8 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
     public let id: Id
     public let name: String
     public let type: DeviceType
-    public let incomingCapabilities: Set<Service.Capability>
-    public let outgoingCapabilities: Set<Service.Capability>
+    public private(set) var incomingCapabilities: Set<Service.Capability>
+    public private(set) var outgoingCapabilities: Set<Service.Capability>
     public let config: DeviceConfiguration
     
     /// Identity protocol extension fields (absent on standard KDE Connect clients).
@@ -198,6 +198,8 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
             self.clientName    = identity.getClientName()
             self.clientVersion = identity.getClientVersion()
             self.platformVersion = identity.getPlatformVersion()
+            if let incoming = try? identity.getIncomingCapabilities() { self.incomingCapabilities = incoming }
+            if let outgoing = try? identity.getOutgoingCapabilities() { self.outgoingCapabilities = outgoing }
         }
         self.connections.append(connection)
         
@@ -215,6 +217,7 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         
         self.updatePairingStatus()
         self.updateReachabilityStatus()
+        self.sendPendingPackets()
     }
     
     /// Register handler for incoming data packets. Most common handler would be Service instances
@@ -569,6 +572,13 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         
         let unsentPackets = connection.reclaimUnsentPackets()
         for unsentPacket in unsentPackets {
+            // ClipboardService sends the current value at reconnect. Replaying
+            // an older queued copy afterwards would overwrite that fresh value.
+            if unsentPacket.dataPacket.type == "kdeconnect.clipboard" || unsentPacket.dataPacket.type == "kdeconnect.clipboard.connect" {
+                unsentPacket.completionHandler?(false, false)
+                Diagnostics.record("clipboard.send_discarded", fields: ["device": Diagnostics.peer(id), "reason": "connection_closed"])
+                continue
+            }
             let pendingPacket = PendingDataPacket(packet: unsentPacket.dataPacket, completionHandler: unsentPacket.completionHandler)
             self.pendingPackets.append(pendingPacket)
         }

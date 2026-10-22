@@ -2,6 +2,31 @@ import XCTest
 @testable import SodutoReliability
 
 final class ClipboardSyncStateTests: XCTestCase {
+    func testRapidCopiesAndClockChangesKeepIncreasingGenerations() {
+        var state = ClipboardSyncState(changeCount: 0)
+        state.observeLocalChange(1, now: Date(timeIntervalSince1970: 1))
+        state.observeLocalChange(2, now: Date(timeIntervalSince1970: 1))
+        XCTAssertEqual(state.timestampMilliseconds, 1001)
+        state.observeLocalChange(3, now: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(state.timestampMilliseconds, 1002)
+    }
+
+    func testReplayFilterRecognizesGenerationWithoutBlockingNewCopies() {
+        var filter = ClipboardReplayFilter()
+        filter.remember("synthetic value", timestamp: 1)
+        XCTAssertTrue(filter.contains("synthetic value", timestamp: 1))
+        XCTAssertFalse(filter.contains("different value", timestamp: 1))
+        XCTAssertFalse(filter.contains("synthetic value", timestamp: 2))
+    }
+
+    func testReplayHistoryIsBounded() {
+        var filter = ClipboardReplayFilter()
+        for generation in 1...129 { filter.remember("synthetic value", timestamp: Int64(generation)) }
+        XCTAssertFalse(filter.contains("synthetic value", timestamp: 1))
+        XCTAssertTrue(filter.contains("synthetic value", timestamp: 2))
+        XCTAssertTrue(filter.contains("synthetic value", timestamp: 129))
+    }
+
     func testNewOfflineCopyRejectsOlderReconnectClipboard() {
         var state = ClipboardSyncState(changeCount: 1)
         state.recordRemoteChange(2, timestampMilliseconds: 100_000)

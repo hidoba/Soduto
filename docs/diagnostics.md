@@ -64,6 +64,10 @@ Filter by `session`, then match the `connection` UUID and `device` alias:
 | `connection.tls_*` | TLS progress or failure. |
 | `connection.handshake_timeout` | Ten-second initialization deadline expired; `phase` identifies where. |
 | `connection.state_changed` | Initializing → Open → Closed lifecycle. |
+| `pairing.request_received` | A valid incoming pairing or re-pair request needs user approval. |
+| `pairing.invalid_packet` | Malformed pairing data or a v8 clock difference exceeding thirty minutes. |
+| `pairing.interrupted` / `pairing.timed_out` | A pending request lost its connection or reached its deadline. Existing pairing pins survive ordinary disconnects. |
+| `pairing.duplicate_ignored` | A duplicate acceptance was ignored without generating another reply. |
 | `packet.sending` / `packet.received` | Packet type, ID and byte count. Sending means queued to the socket, not acknowledged by the peer. |
 | `service.packet_handled` | Service that consumed an incoming packet. |
 | `service.packet_unhandled` | Packet arrived but no active service accepted it. |
@@ -78,6 +82,16 @@ service dispatch and direction settings. A `clipboard.connect_ignored` event
 with `remote_not_newer` is expected for stale/unknown reconnect contents; a fresh
 `kdeconnect.clipboard` packet is still applied.
 
+Clipboard decisions also distinguish identical content, previously seen generations,
+older generations and timestamp ties. A bounded in-memory cache remembers only
+SHA256 fingerprints and timestamps; neither is written to the journal. Copies
+observed in the same millisecond receive increasing timestamps. This fork marks
+its ordered normal clipboard packets with `sodutoTimestamped`; ordinary KDE
+Connect packets remain live edits without depending on their sender's clock.
+Identical text never clears the pasteboard, preserving its other representations.
+On reconnect, obsolete queued clipboard sends are discarded and the current
+pasteboard is synchronized instead.
+
 Error records contain error domain, numeric code, Swift type and associated enum
 case label rather than arbitrary error
 descriptions, which may contain paths or other personal data. Handshake timeout
@@ -90,6 +104,7 @@ timeout; compare the peer's logs at the same time.
 ```sh
 swift test
 python3 scripts/test-clipboard-service.py
+python3 scripts/test-pairing-transport.py
 ```
 
 The Swift package tests clipboard timestamp state, port validation, restart
@@ -97,8 +112,14 @@ cooldowns, log privacy, permissions, rotation, persistence, concurrent writes,
 export snapshots, the actual ZIP export, I/O failure reporting and recovery from a partial record.
 The integration harness compiles the actual `ClipboardService.swift` against a
 fake pasteboard/peer boundary. It covers offline copies, copies between timer
-ticks, non-text clipboard protection, multi-peer forwarding without echoes,
-and invalid timestamps. It never accesses the real clipboard or keychain.
+ticks, non-text clipboard protection, legacy clients, three-peer relay loops,
+interleaved generations, intentional repeated copies and invalid timestamps.
+The pairing/transport harness runs the production pairing handler, device,
+device manager, service dispatch and extracted connection event callbacks with
+fake transport, certificates and UI. It covers protocol 7/8, verification hashes,
+invalid and expired requests, explicit re-pair approval, duplicate accepts,
+missing certificates, interrupted requests, callback ordering, capability refresh
+and stale clipboard queues. Both harnesses avoid the real clipboard and keychain.
 
 GitHub Actions also builds the entire Release app and extensions on macOS 26.
 It uploads an **unsigned** app ZIP and checksum for review; this is not a
@@ -113,6 +134,10 @@ Before treating a build as stable, exercise these with the actual Ubuntu peer:
 - Disable/re-enable Wi-Fi and switch between Wi-Fi and Ethernet/VPN routes.
 - Relaunch each client independently; test a transfer after reconnecting.
 - Toggle incoming/outgoing clipboard settings and inspect the resulting events.
+- Disable/re-enable the peer's clipboard plugin, then reconnect within fifteen seconds.
+- Pair from each side, cancel from each side, and disconnect during a pending request.
+- Re-pair after forgetting the Mac on Ubuntu; compare the verification codes.
+- Pair three clients and confirm that one copy settles without repeated packets.
 - Export while a transfer is active, relaunch, and confirm prior events remain.
 
 ## Fork updates

@@ -1,4 +1,31 @@
 import Foundation
+import CryptoKit
+
+/// Remember a bounded set of clipboard generations without retaining their text.
+/// Packet IDs cannot identify a relay: each forwarding peer creates a new one.
+struct ClipboardReplayFilter {
+    private struct Fingerprint: Equatable {
+        let digest: Data
+        let timestamp: Int64
+    }
+    private var recent: [Fingerprint] = []
+    private let capacity = 128
+
+    func contains(_ content: String, timestamp: Int64) -> Bool {
+        recent.contains(fingerprint(content, timestamp: timestamp))
+    }
+
+    mutating func remember(_ content: String, timestamp: Int64) {
+        let value = fingerprint(content, timestamp: timestamp)
+        guard !recent.contains(value) else { return }
+        recent.append(value)
+        if recent.count > capacity { recent.removeFirst(recent.count - capacity) }
+    }
+
+    private func fingerprint(_ content: String, timestamp: Int64) -> Fingerprint {
+        Fingerprint(digest: Data(SHA256.hash(data: Data(content.utf8))), timestamp: timestamp)
+    }
+}
 
 /// Tracks freshness without retaining or logging clipboard contents.
 struct ClipboardSyncState {
@@ -11,8 +38,14 @@ struct ClipboardSyncState {
     mutating func observeLocalChange(_ newCount: Int, now: Date = Date()) -> Bool {
         guard newCount != changeCount else { return false }
         changeCount = newCount
-        timestampMilliseconds = Self.milliseconds(now)
+        timestampMilliseconds = timestampForNextChange(now: now)
         return true
+    }
+
+    func timestampForNextChange(now: Date = Date()) -> Int64 {
+        // Two copies in one millisecond must still have different generations.
+        let next = timestampMilliseconds < Int64.max ? timestampMilliseconds + 1 : Int64.max
+        return max(next, Self.milliseconds(now))
     }
 
     mutating func recordRemoteChange(_ newCount: Int, timestampMilliseconds: Int64) {

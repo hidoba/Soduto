@@ -35,6 +35,7 @@ public class ClipboardService: BidirectionalService {
     
     private var monitoringTimer: Timer? = nil
     private var syncState = ClipboardSyncState(changeCount: NSPasteboard.general.changeCount)
+    private var replayFilter = ClipboardReplayFilter()
     private var devices: [Device] = []
     
     /// Start tracking immediately, including periods without a connected peer.
@@ -73,8 +74,10 @@ public class ClipboardService: BidirectionalService {
                 logDecision("ignored", device: device, reason: "invalid_content")
                 return true
             }
-            let senderTimestamp = (try? dataPacket.getTimestamp()) ?? Date()
-            applyExternalClipboard(contents, from: device, timestamp: senderTimestamp)
+            let reportedTimestamp = try? dataPacket.getTimestamp()
+            let ordered = dataPacket.hasOrderedClipboardTimestamp && (reportedTimestamp ?? 0) > 0
+            let senderTimestamp = ordered ? reportedTimestamp! : syncState.timestampForNextChange()
+            applyExternalClipboard(contents, from: device, timestamp: senderTimestamp, ordered: ordered)
             return true
         case DataPacket.clipboardConnectPacketType:
             guard incomingEnabled else {
@@ -85,10 +88,9 @@ public class ClipboardService: BidirectionalService {
                 logDecision("ignored", device: device, reason: "invalid_content")
                 return true
             }
-            let remoteTimestamp = (try? dataPacket.getTimestamp()) ?? Date(timeIntervalSince1970: 0)
-            let remoteMilliseconds = ClipboardSyncState.milliseconds(remoteTimestamp)
+            let remoteMilliseconds = (try? dataPacket.getTimestamp()) ?? 0
             if syncState.shouldAcceptConnect(timestampMilliseconds: remoteMilliseconds) {
-                applyExternalClipboard(contents, from: device, timestamp: remoteTimestamp)
+                applyExternalClipboard(contents, from: device, timestamp: remoteMilliseconds)
             } else {
                 Diagnostics.record("clipboard.connect_ignored", fields: [
                     "device": Diagnostics.peer(device.id), "reason": "remote_not_newer",
@@ -148,9 +150,7 @@ public class ClipboardService: BidirectionalService {
         if let monitoringTimer { RunLoop.main.add(monitoringTimer, forMode: .common) }
     }
     
-    private var currentTimestamp: Date {
-        Date(timeIntervalSince1970: Double(syncState.timestampMilliseconds) / 1000)
-    }
+    private var currentTimestamp: Int64 { syncState.timestampMilliseconds }
     
     private func checkPasteboard() {
         guard syncState.observeLocalChange(NSPasteboard.general.changeCount) else { return }
@@ -162,6 +162,7 @@ public class ClipboardService: BidirectionalService {
         guard let items = NSPasteboard.general.readObjects(forClasses: [ NSString.self ], options: nil) else { return }
         guard items.count > 0 else { return }
         guard let content = items[0] as? String else { return }
+        replayFilter.remember(content, timestamp: syncState.timestampMilliseconds)
         
         for device in self.devices {
             send(DataPacket.clipboardPacket(withContent: content, timestamp: currentTimestamp), to: device)
@@ -171,16 +172,48 @@ public class ClipboardService: BidirectionalService {
     }
     
     /// Apply content received from a remote device.
-    /// - Parameter timestamp: The sender's own copy timestamp. Stored as `lastLocalChangeTimestamp`
+    /// - Parameter timestamp: The sender's copy timestamp, stored in the sync state
     ///   so that future `clipboard.connect` packets carry the original creation time rather than
     ///   our receive time, preventing the peer from seeing a "newer" timestamp on every reconnect.
-    private func applyExternalClipboard(_ content: String, from device: Device, timestamp: Date = Date()) {
+    private func applyExternalClipboard(_ content: String, from device: Device, timestamp milliseconds: Int64, ordered: Bool = true) {
+        // A relay may return through a different connection with a new packet ID.
+        // Keep both checks: legacy peers omit timestamps, while a remembered
+        // generation also stops two different clipboard values circling a mesh.
+        let current = NSPasteboard.general.readObjects(forClasses: [NSString.self], options: nil)?.first as? String
+        if current == content {
+            replayFilter.remember(content, timestamp: milliseconds)
+            if ordered && milliseconds > syncState.timestampMilliseconds {
+                syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: milliseconds)
+            }
+            logDecision("ignored", device: device, reason: "identical_content")
+            return
+        }
+        if ordered {
+            // This fork explicitly marks ordered normal relays as an extension.
+            // Order those generations, including simultaneous copies, so a mesh
+            // converges. Unmarked KDE packets remain live edits, even if another
+            // client includes its own timestamp extension or has a skewed clock.
+            if milliseconds < syncState.timestampMilliseconds {
+                logDecision("ignored", device: device, reason: "older_generation")
+                return
+            }
+            if milliseconds == syncState.timestampMilliseconds,
+               current == nil || !current!.utf8.lexicographicallyPrecedes(content.utf8) {
+                logDecision("ignored", device: device, reason: "timestamp_tie")
+                return
+            }
+        }
+        guard !replayFilter.contains(content, timestamp: milliseconds) else {
+            logDecision("ignored", device: device, reason: "replayed_generation")
+            return
+        }
         NSPasteboard.general.clearContents()
         guard NSPasteboard.general.writeObjects([content as NSString]) else {
             Diagnostics.record("clipboard.write_failed", level: .error, fields: ["device": Diagnostics.peer(device.id)])
             return
         }
-        syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: ClipboardSyncState.milliseconds(timestamp))
+        syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: milliseconds)
+        replayFilter.remember(content, timestamp: milliseconds)
         logDecision("applied", device: device, reason: "remote_change")
         // Relay explicitly; marking the remote change observed prevents echoing
         // it back to its sender on the next timer tick.
@@ -222,23 +255,24 @@ fileprivate extension DataPacket {
     
     var isClipboardPacket: Bool { return self.type == DataPacket.clipboardPacketType }
     var isClipboardConnectPacket: Bool { return self.type == DataPacket.clipboardConnectPacketType }
+    var hasOrderedClipboardTimestamp: Bool { (body["sodutoTimestamped"] as? NSNumber)?.boolValue == true }
     
     
     // MARK: Public static methods
     
-    static func clipboardPacket(withContent content: String, timestamp: Date? = nil) -> DataPacket {
+    static func clipboardPacket(withContent content: String, timestamp: Int64? = nil) -> DataPacket {
         var body: [String: AnyObject] = [ClipboardProperty.content.rawValue: content as AnyObject]
         if let ts = timestamp {
-            body[ClipboardProperty.timestamp.rawValue] = NSNumber(value: Int64(ts.timeIntervalSince1970 * 1000))
+            body[ClipboardProperty.timestamp.rawValue] = NSNumber(value: ts)
+            body["sodutoTimestamped"] = NSNumber(value: true)
         }
         return DataPacket(type: clipboardPacketType, body: body)
     }
     
-    static func clipboardConnectPacket(withContent content: String, timestamp: Date) -> DataPacket {
-        let ms = Int64(timestamp.timeIntervalSince1970 * 1000)
+    static func clipboardConnectPacket(withContent content: String, timestamp: Int64) -> DataPacket {
         return DataPacket(type: clipboardConnectPacketType, body: [
             ClipboardProperty.content.rawValue: content as AnyObject,
-            ClipboardProperty.timestamp.rawValue: NSNumber(value: ms)
+            ClipboardProperty.timestamp.rawValue: NSNumber(value: timestamp)
         ])
     }
     
@@ -252,13 +286,13 @@ fileprivate extension DataPacket {
         return value
     }
     
-    func getTimestamp() throws -> Date {
+    func getTimestamp() throws -> Int64 {
         guard isClipboardPacket || isClipboardConnectPacket else { throw ClipboardError.wrongType }
         guard body.keys.contains(ClipboardProperty.timestamp.rawValue) else { throw ClipboardError.invalidTimestamp }
         guard let value = body[ClipboardProperty.timestamp.rawValue] as? NSNumber else { throw ClipboardError.invalidTimestamp }
         let milliseconds = value.doubleValue
         guard milliseconds.isFinite, milliseconds >= 0, milliseconds < Double(Int64.max) else { throw ClipboardError.invalidTimestamp }
-        return Date(timeIntervalSince1970: milliseconds / 1000)
+        return Int64(milliseconds)
     }
     
     func validateClipboardType() throws {

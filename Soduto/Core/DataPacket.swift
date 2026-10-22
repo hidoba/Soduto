@@ -266,7 +266,10 @@ extension DataPacket {
     public func getProtocolVersion() throws -> UInt {
         try self.validateIdentityType()
         guard let protocolVersion = body[IdentityProperty.protocolVersion.rawValue] as? NSNumber else { throw IdentityError.invalidProtocolVersion }
-        return protocolVersion.uintValue
+        let value = protocolVersion.doubleValue
+        guard value.isFinite, value.rounded(.towardZero) == value,
+              value >= 7, value <= Double(DataPacket.protocolVersion) else { throw IdentityError.invalidProtocolVersion }
+        return UInt(value)
     }
     
     public func getTCPPort() throws -> UInt16 {

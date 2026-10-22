@@ -35,7 +35,7 @@ public struct DataPacket {
     public init(type: String, body: Body) { self.type = type; self.body = body }
 }
 final class NSPasteboard {
-    static let general = NSPasteboard()
+    static var general = NSPasteboard()
     var changeCount = 0
     var content: String? = "initial synthetic text"
     func readObjects(forClasses classes: [AnyClass], options: [String: Any]?) -> [Any]? {
@@ -66,7 +66,7 @@ let other = Device("other")
 let connection = Connection()
 let oldTime = Date().addingTimeInterval(-120).timeIntervalSince1970 * 1000
 func packet(_ type: String, _ content: String, _ timestamp: Double) -> DataPacket {
-    DataPacket(type: type, body: ["content": content as NSString, "timestamp": NSNumber(value: timestamp)])
+    DataPacket(type: type, body: ["content": content as NSString, "timestamp": NSNumber(value: timestamp), "sodutoTimestamped": NSNumber(value: true)])
 }
 func receive(_ type: String, _ content: String, _ timestamp: Double) {
     precondition(service.handleDataPacket(packet(type, content, timestamp), fromDevice: peer, onConnection: connection))
@@ -99,7 +99,7 @@ print("PASS: fresh non-text clipboard survives a stale text handshake")
 
 service.setup(for: other)
 peer.sent.removeAll(); other.sent.removeAll()
-receive("kdeconnect.clipboard", "new remote synthetic text", oldTime)
+receive("kdeconnect.clipboard", "new remote synthetic text", (Date().timeIntervalSince1970 + 1) * 1000)
 precondition(peer.sent.isEmpty, "Incoming clipboard echoed to sender")
 precondition(other.sent.count == 1, "Incoming clipboard was not relayed to another peer")
 service.pollForTest()
@@ -112,6 +112,77 @@ precondition(NSPasteboard.general.content == before)
 receive("kdeconnect.clipboard.connect", "invalid timestamp", Double.infinity)
 precondition(NSPasteboard.general.content == before)
 print("PASS: zero and non-finite timestamps are ignored")
+// Legacy clipboard packets carry no timestamp. An identical update must not
+// clear other pasteboard representations, change its generation, or be relayed.
+peer.sent.removeAll(); other.sent.removeAll()
+let countBeforeDuplicate = NSPasteboard.general.changeCount
+let legacy = DataPacket(type: "kdeconnect.clipboard", body: ["content": before! as NSString])
+_ = service.handleDataPacket(legacy, fromDevice: peer, onConnection: connection)
+precondition(NSPasteboard.general.changeCount == countBeforeDuplicate)
+precondition(peer.sent.isEmpty && other.sent.isEmpty)
+print("PASS: identical legacy clipboard packets neither rewrite nor relay")
+let skewedLegacy = DataPacket(type: "kdeconnect.clipboard", body: ["content": "fresh legacy edit" as NSString, "timestamp": NSNumber(value: 1)])
+_ = service.handleDataPacket(skewedLegacy, fromDevice: peer, onConnection: connection)
+precondition(NSPasteboard.general.content == "fresh legacy edit")
+print("PASS: unmarked legacy edits remain live regardless of clock skew")
+
+
+// Give each synthetic computer its own pasteboard. All peers are mutually
+// connected; forwarding creates new packet identities as real clients do.
+let names = ["A", "B", "C"]
+var boards: [String: NSPasteboard] = [:]
+var services: [String: ClipboardService] = [:]
+var links: [String: [String: Device]] = [:]
+for name in names {
+    let board = NSPasteboard()
+    boards[name] = board; NSPasteboard.general = board
+    services[name] = ClipboardService()
+    links[name] = Dictionary(uniqueKeysWithValues: names.filter { $0 != name }.map { ($0, Device($0)) })
+    for peer in links[name]!.values { services[name]!.setup(for: peer) }
+}
+for peers in links.values { for peer in peers.values { peer.sent.removeAll() } }
+var events: [(String, String, DataPacket)] = []
+func collect() {
+    for source in names { for (destination, peer) in links[source]! {
+        for packet in peer.sent { events.append((source, destination, packet)) }
+        peer.sent.removeAll()
+    } }
+}
+func copy(on name: String, text: String) {
+    NSPasteboard.general = boards[name]!
+    NSPasteboard.general.simulateCopy(text)
+    services[name]!.pollForTest()
+    collect()
+}
+func drain() -> Int {
+    var delivered = 0
+    while !events.isEmpty && delivered < 100 {
+        let (source, destination, packet) = events.removeFirst()
+        NSPasteboard.general = boards[destination]!
+        _ = services[destination]!.handleDataPacket(packet, fromDevice: links[destination]![source]!, onConnection: connection)
+        delivered += 1
+        collect()
+    }
+    precondition(events.isEmpty, "Clipboard relay did not settle")
+    return delivered
+}
+copy(on: "A", text: "one mesh copy")
+precondition(drain() <= 6)
+precondition(boards.values.allSatisfy { $0.content == "one mesh copy" })
+print("PASS: three-peer clipboard triangle settles after one copy")
+
+copy(on: "A", text: "concurrent value one")
+copy(on: "B", text: "concurrent value two")
+_ = drain()
+precondition(Set(boards.values.compactMap { $0.content }).count == 1, "Clipboard mesh did not converge")
+print("PASS: interleaved clipboard generations do not circulate forever")
+
+// Re-copying previously shared text is still a new local action.
+copy(on: "A", text: "one mesh copy")
+_ = drain()
+precondition(boards.values.allSatisfy { $0.content == "one mesh copy" })
+print("PASS: intentionally copying earlier text syncs again")
+
 '''
 with tempfile.TemporaryDirectory(prefix="soduto-clipboard-tests-") as directory:
     directory = Path(directory)
