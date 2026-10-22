@@ -97,7 +97,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleepListener(_:)), name: NSWorkspace.willSleepNotification, object: nil)
         self.statusBarMenuController.installDiagnosticsMenu(Diagnostics.shared.makeMenu(
             snapshot: { [weak self] in self?.diagnosticSnapshot() ?? [:] },
-            recover: { [weak self] in self?.connectionProvider.restart(reason: "user") }
+            recover: { [weak self] in
+                KeychainTLSPrivateKey.resetAuthorizationFailures()
+                self?.connectionProvider.restart(reason: "user")
+            }
         ))
         
         self.connectionProvider.start()

@@ -1,0 +1,228 @@
+import Foundation
+import Security
+import XCTest
+import NIOCore
+import NIOPosix
+import NIOSSL
+import NIOTLS
+import X509
+import _CryptoExtras
+import SwiftASN1
+@testable import SodutoIdentity
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+    var value: Int { lock.lock(); defer { lock.unlock() }; return storage }
+    func increment() { lock.lock(); storage += 1; lock.unlock() }
+}
+
+/// Never sets a default keychain or searches the user's keychains.
+private final class TestKeychain {
+    let directory: URL
+    let keychain: SecKeychain
+    init() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("test.keychain-db").path
+        let password = "synthetic-test-password"
+        var result: SecKeychain?
+        let status = path.withCString { path in
+            password.withCString { password in
+                SecKeychainCreate(path, UInt32(strlen(password)), password, false, nil, &result)
+            }
+        }
+        guard status == errSecSuccess, let result else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        keychain = result
+    }
+    deinit {
+        SecKeychainDelete(keychain)
+        try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+private struct Fixture {
+    let identity: SecIdentity
+    let key: SecKey
+    let certificate: NIOSSLCertificate
+    let certificateData: Data
+
+    init(in keychain: SecKeychain) throws {
+        let rsa = try _RSA.Signing.PrivateKey(keySize: .bits2048)
+        var error: Unmanaged<CFError>?
+        let memoryKey = try XCTUnwrap(SecKeyCreateWithData(Data(rsa.derRepresentation) as CFData, [
+            kSecAttrKeyType: kSecAttrKeyTypeRSA,
+            kSecAttrKeyClass: kSecAttrKeyClassPrivate
+        ] as CFDictionary, &error))
+        key = try CertificateUtils.storePrivateKey(memoryKey, name: UUID().uuidString, keychain: keychain)
+        let x509 = try CertificateUtils.createSelfSignedCertificate(commonName: UUID().uuidString,
+                                                                   privateKey: rsa, expirationInterval: 86400)
+        var serializer = DER.Serializer()
+        try x509.serialize(into: &serializer)
+        certificateData = Data(serializer.serializedBytes)
+        certificate = try NIOSSLCertificate(bytes: serializer.serializedBytes, format: .der)
+        let secCertificate = try XCTUnwrap(SecCertificateCreateWithData(nil, certificateData as CFData))
+        XCTAssertEqual(SecItemAdd([kSecClass: kSecClassCertificate, kSecValueRef: secCertificate,
+                                  kSecUseKeychain: keychain] as CFDictionary, nil), errSecSuccess)
+        var found: SecIdentity?
+        XCTAssertEqual(SecIdentityCreateWithCertificate(keychain, secCertificate, &found), errSecSuccess)
+        identity = try XCTUnwrap(found)
+    }
+}
+
+private final class HandshakeCapture: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+    let promise: EventLoopPromise<Void>
+    init(_ promise: EventLoopPromise<Void>) { self.promise = promise }
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if case .handshakeCompleted = event as? TLSUserEvent { promise.succeed(()) }
+        context.fireUserInboundEventTriggered(event)
+    }
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        promise.fail(error)
+        context.close(promise: nil)
+    }
+}
+
+final class KeychainTLSTests: XCTestCase {
+    override func setUp() { KeychainTLSPrivateKey.resetAuthorizationFailures() }
+
+    private func memoryKey() throws -> SecKey {
+        var error: Unmanaged<CFError>?
+        return try XCTUnwrap(SecKeyCreateRandomKey([
+            kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048,
+            kSecAttrIsPermanent: false
+        ] as CFDictionary, &error))
+    }
+
+    private func withChannel(_ body: (Channel) throws -> Void) throws {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try! group.syncShutdownGracefully() }
+        let server = try ServerBootstrap(group: group).bind(host: "127.0.0.1", port: 0).wait()
+        defer { try! server.close().wait() }
+        let client = try ClientBootstrap(group: group).connect(to: try XCTUnwrap(server.localAddress)).wait()
+        defer { try! client.close().wait() }
+        try body(client)
+    }
+
+    func testAllSixTLSAlgorithmsProduceValidSignatures() throws {
+        let key = try memoryKey()
+        let signer = KeychainTLSPrivateKey(key: key, identityID: Data(UUID().uuidString.utf8))
+        let publicKey = try XCTUnwrap(SecKeyCopyPublicKey(key))
+        let algorithms: [SecKeyAlgorithm] = [.rsaSignatureMessagePSSSHA256, .rsaSignatureMessagePSSSHA384,
+            .rsaSignatureMessagePSSSHA512, .rsaSignatureMessagePKCS1v15SHA256,
+            .rsaSignatureMessagePKCS1v15SHA384, .rsaSignatureMessagePKCS1v15SHA512]
+        try withChannel { channel in
+            var message = channel.allocator.buffer(capacity: 40)
+            message.writeString("synthetic TLS certificate verification")
+            for (tls, security) in zip(signer.signatureAlgorithms, algorithms) {
+                let signature = try signer.sign(channel: channel, algorithm: tls, data: message).wait()
+                var error: Unmanaged<CFError>?
+                XCTAssertTrue(SecKeyVerifySignature(publicKey, security, Data(message.readableBytesView) as CFData,
+                                                    Data(signature.readableBytesView) as CFData, &error))
+            }
+        }
+    }
+
+    func testDeniedAccessIsSuppressedAcrossReconnectsAndExplicitRetryWorks() throws {
+        let key = try memoryKey()
+        let identifier = Data(UUID().uuidString.utf8)
+        let attempts = Counter()
+        let deny: @Sendable (SecKeyAlgorithm, Data) throws -> Data = { _, _ in
+            attempts.increment()
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(errSecUserCanceled))
+        }
+        let first = KeychainTLSPrivateKey(key: key, identityID: identifier, signer: deny)
+        let reconnected = KeychainTLSPrivateKey(key: key, identityID: identifier, signer: deny)
+        try withChannel { channel in
+            let data = channel.allocator.buffer(capacity: 0)
+            let attemptsInFlight = (0..<12).map { _ in first.sign(channel: channel, algorithm: .rsaPssRsaeSha256, data: data) }
+            for result in attemptsInFlight { XCTAssertThrowsError(try result.wait()) }
+            XCTAssertThrowsError(try reconnected.sign(channel: channel, algorithm: .rsaPssRsaeSha256, data: data).wait())
+            XCTAssertEqual(attempts.value, 1)
+            KeychainTLSPrivateKey.resetAuthorizationFailures()
+            XCTAssertThrowsError(try reconnected.sign(channel: channel, algorithm: .rsaPssRsaeSha256, data: data).wait())
+            XCTAssertEqual(attempts.value, 2)
+        }
+    }
+
+    func testUnsupportedAlgorithmsFailWithoutUsingKeychain() throws {
+        let attempts = Counter()
+        let signer = KeychainTLSPrivateKey(key: try memoryKey(), identityID: Data(UUID().uuidString.utf8)) { _, _ in
+            attempts.increment(); return Data()
+        }
+        try withChannel { channel in
+            let data = channel.allocator.buffer(capacity: 0)
+            XCTAssertThrowsError(try signer.sign(channel: channel, algorithm: .rsaPkcs1Sha1, data: data).wait())
+            XCTAssertThrowsError(try signer.decrypt(channel: channel, data: data).wait())
+            XCTAssertEqual(attempts.value, 0)
+        }
+    }
+
+    func testPermanentIdentityHasReadableLabelAndRetainsCertificate() throws {
+        let keychain = try TestKeychain()
+        let fixture = try Fixture(in: keychain.keychain)
+        let attributes = try XCTUnwrap(SecKeyCopyAttributes(fixture.key) as? [String: Any])
+        XCTAssertEqual(attributes[kSecAttrLabel as String] as? String, "Soduto Device Identity")
+        _ = try KeychainTLSIdentity.configuration(for: fixture.identity, server: false)
+        _ = try KeychainTLSIdentity.configuration(for: fixture.identity, server: true)
+        var certificate: SecCertificate?
+        XCTAssertEqual(SecIdentityCopyCertificate(fixture.identity, &certificate), errSecSuccess)
+        XCTAssertEqual(SecCertificateCopyData(try XCTUnwrap(certificate)) as Data, fixture.certificateData)
+    }
+
+    private func handshake(version: TLSVersion, algorithm: SignatureAlgorithm? = nil, repetitions: Int = 1) throws {
+        let keychain = try TestKeychain()
+        let serverIdentity = try Fixture(in: keychain.keychain)
+        let clientIdentity = try Fixture(in: keychain.keychain)
+        var serverConfiguration = try KeychainTLSIdentity.configuration(for: serverIdentity.identity, server: true)
+        var clientConfiguration = try KeychainTLSIdentity.configuration(for: clientIdentity.identity, server: false)
+        serverConfiguration.maximumTLSVersion = version
+        serverConfiguration.minimumTLSVersion = version
+        clientConfiguration.maximumTLSVersion = version
+        clientConfiguration.minimumTLSVersion = version
+        if let algorithm {
+            serverConfiguration.signingSignatureAlgorithms = [algorithm]
+            clientConfiguration.signingSignatureAlgorithms = [algorithm]
+        }
+        let serverContext = try NIOSSLContext(configuration: serverConfiguration)
+        let clientContext = try NIOSSLContext(configuration: clientConfiguration)
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try! group.syncShutdownGracefully() }
+        for _ in 0..<repetitions {
+            let serverComplete = group.next().makePromise(of: Void.self)
+            let clientComplete = group.next().makePromise(of: Void.self)
+            let timeout = group.next().scheduleTask(in: .seconds(10)) {
+                serverComplete.fail(NIOSSLError.failedToLoadPrivateKey)
+                clientComplete.fail(NIOSSLError.failedToLoadPrivateKey)
+            }
+            defer { timeout.cancel() }
+            let server = try ServerBootstrap(group: group).childChannelInitializer { channel in
+                let tls = NIOSSLServerHandler(context: serverContext, customVerificationCallback: { certs, promise in
+                    promise.succeed(certs.first == clientIdentity.certificate ? .certificateVerified : .failed)
+                })
+                return channel.pipeline.addHandlers(tls, HandshakeCapture(serverComplete))
+            }.bind(host: "127.0.0.1", port: 0).wait()
+            defer { try! server.close().wait() }
+            let client = try ClientBootstrap(group: group).channelInitializer { channel in
+                do {
+                    let tls = try NIOSSLClientHandler(context: clientContext, serverHostname: nil,
+                                                     customVerificationCallback: { certs, promise in
+                        promise.succeed(certs.first == serverIdentity.certificate ? .certificateVerified : .failed)
+                    })
+                    return channel.pipeline.addHandlers(tls, HandshakeCapture(clientComplete))
+                } catch { return channel.eventLoop.makeFailedFuture(error) }
+            }.connect(to: try XCTUnwrap(server.localAddress)).wait()
+            defer { try! client.close().wait() }
+            try clientComplete.futureResult.wait()
+            try serverComplete.futureResult.wait()
+        }
+    }
+
+    func testMutualTLS12WithRSAPSS() throws { try handshake(version: .tlsv12, algorithm: .rsaPssRsaeSha256) }
+    func testMutualTLS12WithRSAPKCS1() throws { try handshake(version: .tlsv12, algorithm: .rsaPkcs1Sha256) }
+    func testMutualTLS13() throws { try handshake(version: .tlsv13) }
+    func testRepeatedReconnectsWithSameIdentity() throws { try handshake(version: .tlsv13, repetitions: 5) }
+}

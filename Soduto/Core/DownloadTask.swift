@@ -217,40 +217,7 @@ public class DownloadTask {
     // MARK: Private - TLS
     
     private func createTLSConfiguration() throws -> TLSConfiguration {
-        // Extract certificate and private key from SecIdentity
-        var certificate: SecCertificate?
-        let certStatus = SecIdentityCopyCertificate(hostIdentity, &certificate)
-        guard certStatus == errSecSuccess, let cert = certificate else {
-            throw DownloadTaskError.failedToLoadCertificate
-        }
-        
-        var privateKey: SecKey?
-        let keyStatus = SecIdentityCopyPrivateKey(hostIdentity, &privateKey)
-        guard keyStatus == errSecSuccess, let key = privateKey else {
-            throw DownloadTaskError.failedToLoadPrivateKey
-        }
-        
-        // Convert to NIOSSLCertificate and NIOSSLPrivateKey
-        let certData = SecCertificateCopyData(cert) as Data
-        let sslCert = try NIOSSLCertificate(bytes: Array(certData), format: .der)
-        
-        var error: Unmanaged<CFError>?
-        guard let keyData = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
-            throw DownloadTaskError.failedToLoadPrivateKey
-        }
-        
-        let sslKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .der)
-        
-        var config = TLSConfiguration.makeClientConfiguration()
-        config.certificateChain = [.certificate(sslCert)]
-        config.privateKey = .privateKey(sslKey)
-        
-        // For mutual TLS with self-signed certificates:
-        // - Use custom verification callback for trust decisions
-        config.certificateVerification = .noHostnameVerification
-        config.minimumTLSVersion = .tlsv12
-        
-        return config
+        try KeychainTLSIdentity.configuration(for: hostIdentity, server: false)
     }
     
     // MARK: Private - Data Handling
