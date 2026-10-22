@@ -369,26 +369,6 @@ public class CertificateUtils {
         }
     }
     
-    private class func generateRSAKeyPair(sizeInBits: Int) throws -> (SecKey, SecKey) {
-        let attributes: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecAttrKeySizeInBits as String: sizeInBits,
-            kSecAttrIsPermanent as String: false
-        ]
-        
-        var error: Unmanaged<CFError>?
-        guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            let status = error.map { Int32(CFErrorGetCode($0.takeRetainedValue())) } ?? errSecInternalError
-            throw CertificateError.generateRSAKeyPairFailure(status: status)
-        }
-        
-        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
-            throw CertificateError.generateRSAKeyPairFailure(status: errSecInternalError)
-        }
-        
-        return (publicKey, privateKey)
-    }
-
     /// Store only after signing the new certificate in memory. A named access
     /// descriptor is what macOS displays in authorization dialogs; a key's label
     /// alone does not replace the legacy "<key>" placeholder.
@@ -444,27 +424,13 @@ public class CertificateUtils {
             try? deleteCertificate(certCommonName)
         }
         
-        // Generate and sign in memory, before the private key enters Keychain.
-        // Exporting a persistent key here would trigger an export prompt even
-        // on first launch. Existing identities are reused by getOrCreateIdentity.
-        let (_, privateKey) = try generateRSAKeyPair(sizeInBits: 2048)
+        // New identities are generated in memory. Stored identities are never
+        // exported, including on first launch; getOrCreateIdentity reuses them.
         var savedPrivateKey: SecKey?
-        
         do {
-            // This key is still ephemeral; no Keychain export authorization.
-            var privateKeyCFData: CFData? = nil
-            let exportStatus = SecItemExport(privateKey, .formatOpenSSL, .pemArmour, nil, &privateKeyCFData)
-            guard exportStatus == errSecSuccess, let pemData = privateKeyCFData as Data? else {
-                throw CertificateError.createIdentityFailure(status: exportStatus)
-            }
-            
-            guard let pemString = String(data: pemData, encoding: .utf8) else {
-                throw CertificateError.createIdentityFailure(status: errSecInternalError)
-            }
-            
-            // Parse PEM key with swift-crypto
-            let rsaPrivateKey = try _RSA.Signing.PrivateKey(pemRepresentation: pemString)
-            
+            let rsaPrivateKey = try _RSA.Signing.PrivateKey(keySize: .bits2048)
+            let pemData = Data(rsaPrivateKey.pemRepresentation.utf8)
+
             // Create self-signed certificate using swift-certificates
             let certificate = try createSelfSignedCertificate(
                 commonName: certCommonName,
