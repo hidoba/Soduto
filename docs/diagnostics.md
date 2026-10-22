@@ -3,7 +3,11 @@
 This fork combines `fix/network-reliability` (`ca7db3a`) and
 `feat/refine-services` (`afcc62d`) from sannidhyaroy/Soduto. It adds recovery
 fixes and a persistent, bounded diagnostic journal. The app uses bundle ID
-`com.hidoba.Soduto` and version 3.2.1 (27). Pair this fork as a new Mac device.
+`com.hidoba.Soduto` and version 3.2.1 (28). Pair this fork as a new Mac device.
+
+The menu bar icon shows the number of paired, reachable devices, or `×` when
+none are connected. It updates as devices connect, disconnect or change pairing
+state, including after sleep or network recovery. Hover for the connection count.
 
 ## Capture a failure
 

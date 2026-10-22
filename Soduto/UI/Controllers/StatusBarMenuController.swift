@@ -19,11 +19,13 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     @IBOutlet weak var launchOnLoginItem: NSMenuItem!
     @IBOutlet weak var dashboardMenuItem: NSMenuItem!
     
-    public var deviceDataSource: DeviceDataSource?
+    public var deviceDataSource: DeviceDataSource? {
+        didSet { updateConnectionCount() }
+    }
     public var serviceManager: ServiceManager?
     public var config: Configuration?
     
-    let statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    let statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var cancellables: Set<AnyCancellable> = []
     /// Persistent references to device menu items keyed by device ID, for in-place image updates
     private var deviceMenuItems: [String: NSMenuItem] = [:]
@@ -50,6 +52,9 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
             self.statusBarItem.image = statusBarIcon
         }
         self.statusBarItem.menu = self.statusBarMenu
+        self.statusBarItem.button?.imagePosition = .imageLeft
+        self.statusBarItem.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        updateConnectionCount()
         
         let dragTypes: [NSPasteboard.PasteboardType] = [
             NSPasteboard.PasteboardType(UTType.url.identifier),
@@ -183,6 +188,7 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
         // Only broadcast on: app start, network change, manual Cmd+R
         
         if menu == self.statusBarMenu {
+            updateConnectionCount()
             self.dashboardMenuItem?.isEnabled = !(deviceDataSource?.pairedDevices.isEmpty ?? true) || !(deviceDataSource?.unavailableDevices.isEmpty ?? true)
             self.refreshMenuDeviceList()
             if #available(macOS 13.0, *) {
@@ -208,6 +214,7 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     // MARK: Public methods
     
     func refreshDeviceLists() {
+        updateConnectionCount()
         self.preferencesWindowController?.refreshDeviceLists()
         self.dashboardWindowController?.refreshDeviceList()
         self.dashboardMenuItem?.isEnabled = !(deviceDataSource?.pairedDevices.isEmpty ?? true) || !(deviceDataSource?.unavailableDevices.isEmpty ?? true)
@@ -220,6 +227,21 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     
     
     // MARK: Private methods
+
+    private func updateConnectionCount() {
+        // Count usable paired peers, rather than discovery results or sockets.
+        let count = deviceDataSource?.pairedRechableDevices.count ?? 0
+        guard let button = statusBarItem.button else { return }
+        button.title = count > 0 ? String(count) : "×"
+        let summary: String
+        switch count {
+        case 0: summary = "No connected devices"
+        case 1: summary = "1 connected device"
+        default: summary = "\(count) connected devices"
+        }
+        button.toolTip = "Soduto — \(summary)"
+        button.setAccessibilityLabel("Soduto, \(summary)")
+    }
     
     @MainActor
     private func refreshMenuDeviceList() {
