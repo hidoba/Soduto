@@ -40,11 +40,12 @@ jobs:
             BUNDLE_ID=com.hidoba.Soduto SODUTO_SOURCE_REVISION="$GITHUB_SHA" \
             build 2>&1 | tee build/xcodebuild.log
       - name: Package unsigned build
+        working-directory: build
         run: |
-          test -x build/DerivedData/Build/Products/Release/Soduto.app/Contents/MacOS/Soduto
-          file build/DerivedData/Build/Products/Release/Soduto.app/Contents/MacOS/Soduto
-          ditto -c -k --keepParent build/DerivedData/Build/Products/Release/Soduto.app build/Soduto-unsigned.zip
-          shasum -a 256 build/Soduto-unsigned.zip > build/Soduto-unsigned.zip.sha256
+          test -x DerivedData/Build/Products/Release/Soduto.app/Contents/MacOS/Soduto
+          file DerivedData/Build/Products/Release/Soduto.app/Contents/MacOS/Soduto
+          ditto -c -k --keepParent DerivedData/Build/Products/Release/Soduto.app Soduto-unsigned.zip
+          shasum -a 256 Soduto-unsigned.zip > Soduto-unsigned.zip.sha256
       - uses: actions/upload-artifact@v4
         if: always()
         with:
