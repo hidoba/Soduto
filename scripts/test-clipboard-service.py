@@ -12,11 +12,21 @@ stubs = r'''
 import Foundation
 public enum Service { public typealias Id = String; public typealias Capability = String }
 public struct ServiceAction { public typealias Id = Int }
-public protocol BidirectionalService {}
+final class UserDefaults {
+    static let standard = UserDefaults()
+    private var values: [String: Any] = [:]
+    func object(forKey key: String) -> Any? { values[key] }
+    func set(_ value: Any?, forKey key: String) { values[key] = value }
+}
+protocol BidirectionalService {
+    var userDefaults: UserDefaults { get }
+    var incomingPreferenceKey: String { get }
+    var outgoingPreferenceKey: String { get }
+}
 extension BidirectionalService {
-    var incomingEnabled: Bool { true }
-    var outgoingEnabled: Bool { true }
-    func send(_ packet: DataPacket, to device: Device) { device.sent.append(packet) }
+    var incomingEnabled: Bool { userDefaults.object(forKey: incomingPreferenceKey) as? Bool ?? true }
+    var outgoingEnabled: Bool { userDefaults.object(forKey: outgoingPreferenceKey) as? Bool ?? true }
+    func send(_ packet: DataPacket, to device: Device) { if outgoingEnabled { device.sent.append(packet) } }
 }
 public enum AppDefaultsStore { public enum Preferences { public enum Services { public enum Clipboard {
     static let incomingKey = "incoming"
@@ -125,6 +135,35 @@ let skewedLegacy = DataPacket(type: "kdeconnect.clipboard", body: ["content": "f
 _ = service.handleDataPacket(skewedLegacy, fromDevice: peer, onConnection: connection)
 precondition(NSPasteboard.general.content == "fresh legacy edit")
 print("PASS: unmarked legacy edits remain live regardless of clock skew")
+
+peer.sent.removeAll(); other.sent.removeAll()
+let hubChangeCount = NSPasteboard.general.changeCount
+let hubGeneration = (Date().timeIntervalSince1970 + 2) * 1000
+receive("kdeconnect.clipboard", "fresh legacy edit", hubGeneration)
+precondition(NSPasteboard.general.changeCount == hubChangeCount)
+precondition(peer.sent.isEmpty && other.sent.count == 1)
+receive("kdeconnect.clipboard", "fresh legacy edit", hubGeneration)
+precondition(other.sent.count == 1)
+print("PASS: a fresh identical generation crosses a hub once without rewriting its pasteboard")
+
+UserDefaults.standard.set(false, forKey: "incoming")
+let beforeDisabledIncoming = NSPasteboard.general.content
+receive("kdeconnect.clipboard", "blocked incoming edit", hubGeneration + 1000)
+precondition(NSPasteboard.general.content == beforeDisabledIncoming)
+peer.sent.removeAll()
+NSPasteboard.general.simulateCopy("outgoing-only edit")
+service.pollForTest()
+precondition(peer.sent.count == 1)
+print("PASS: disabling incoming clipboard still allows explicitly enabled outgoing copies")
+
+UserDefaults.standard.set(true, forKey: "incoming")
+UserDefaults.standard.set(false, forKey: "outgoing")
+peer.sent.removeAll(); other.sent.removeAll()
+receive("kdeconnect.clipboard", "incoming-only edit", hubGeneration + 2000)
+precondition(NSPasteboard.general.content == "incoming-only edit")
+precondition(peer.sent.isEmpty && other.sent.isEmpty)
+UserDefaults.standard.set(true, forKey: "outgoing")
+print("PASS: disabling outgoing clipboard prevents relays while incoming copies still apply")
 
 
 // Give each synthetic computer its own pasteboard. All peers are mutually

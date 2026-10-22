@@ -184,8 +184,14 @@ public class ClipboardService: BidirectionalService {
             replayFilter.remember(content, timestamp: milliseconds)
             if ordered && milliseconds > syncState.timestampMilliseconds {
                 syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: milliseconds)
+                // This hub already has the text, but another peer may not. A
+                // fresh marked generation must still cross the hub exactly once.
+                relayClipboard(content, excluding: device)
+                logDecision(outgoingEnabled ? "relayed" : "ignored", device: device,
+                            reason: outgoingEnabled ? "new_generation_same_content" : "outgoing_disabled")
+            } else {
+                logDecision("ignored", device: device, reason: "identical_content")
             }
-            logDecision("ignored", device: device, reason: "identical_content")
             return
         }
         if ordered {
@@ -217,7 +223,11 @@ public class ClipboardService: BidirectionalService {
         logDecision("applied", device: device, reason: "remote_change")
         // Relay explicitly; marking the remote change observed prevents echoing
         // it back to its sender on the next timer tick.
-        for peer in devices where peer.id != device.id {
+        relayClipboard(content, excluding: device)
+    }
+
+    private func relayClipboard(_ content: String, excluding sender: Device) {
+        for peer in devices where peer.id != sender.id {
             send(DataPacket.clipboardPacket(withContent: content, timestamp: currentTimestamp), to: peer)
         }
     }

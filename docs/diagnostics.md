@@ -3,7 +3,7 @@
 This fork combines `fix/network-reliability` (`ca7db3a`) and
 `feat/refine-services` (`afcc62d`) from sannidhyaroy/Soduto. It adds recovery
 fixes and a persistent, bounded diagnostic journal. The app uses bundle ID
-`com.hidoba.Soduto` and version 3.2.0 (26). Pair this fork as a new Mac device.
+`com.hidoba.Soduto` and version 3.2.1 (27). Pair this fork as a new Mac device.
 
 ## Capture a failure
 
@@ -115,7 +115,8 @@ export snapshots, the actual ZIP export, I/O failure reporting and recovery from
 The integration harness compiles the actual `ClipboardService.swift` against a
 fake pasteboard/peer boundary. It covers offline copies, copies between timer
 ticks, non-text clipboard protection, legacy clients, three-peer relay loops,
-interleaved generations, intentional repeated copies and invalid timestamps.
+hub forwarding, interleaved generations, direction preferences, intentional
+repeated copies and invalid timestamps.
 The pairing/transport harness runs the production pairing handler, device,
 device manager, service dispatch and extracted connection event callbacks with
 fake transport, certificates and UI. It covers protocol 7/8, verification hashes,

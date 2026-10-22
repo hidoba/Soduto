@@ -82,7 +82,11 @@ extension String.StringInterpolation {
     mutating func appendInterpolation<T>(_ value: T, privacy: Privacy) { appendLiteral(String(describing: value)) }
 }
 enum Logger {
-    struct Sink { func error(_ message: String) {}; func debug(_ message: String) {} }
+    struct Sink {
+        func error(_ message: String) {}
+        func warning(_ message: String) {}
+        func debug(_ message: String) {}
+    }
     static let network = Sink()
     static let device = Sink()
 }
