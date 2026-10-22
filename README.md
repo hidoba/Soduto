@@ -1,487 +1,184 @@
 # Soduto — hidoba fork
 
-A macOS KDE Connect client focused on reliable reconnects and useful diagnostics.
-This fork combines upstream `fix/network-reliability` and `feat/refine-services`,
-then fixes offline clipboard freshness, outgoing TCP handshake ordering, wake
-recovery, invalid port handling, and connection lifecycle races.
-
-- **Source:** [hidoba/Soduto](https://github.com/hidoba/Soduto), default development branch `codex/reliability-diagnostics`.
-- **Diagnostics:** menu → **Diagnostics → Export Diagnostic Bundle…**.
-- **Builds:** [GitHub Actions](https://github.com/hidoba/Soduto/actions/workflows/build.yml) produces an unsigned app ZIP and checksum after tests and a full Xcode build.
-- **Updates:** this fork uses manual releases; automatic upstream Sparkle updates are disabled.
-- **Requirements:** macOS 14+, Xcode 26+ to build. On Ubuntu GNOME/Wayland, GSConnect v74+ is recommended.
-- **Status:** development build; real-device sleep/wake and Wi-Fi tests remain part of release qualification.
-
-Read [diagnostics and testing](docs/diagnostics.md) for capture instructions, privacy,
-log retention, regression checks and the real-device test matrix. The app has its
-own bundle ID (`com.hidoba.Soduto`), preferences, and keychain identity names;
-pair it as a new device. Run one Mac KDE Connect client at a time when testing.
-
-Credits: this is based on [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto)
-and the original [soduto/Soduto](https://github.com/soduto/Soduto). The original
-GPL license and attribution remain in place.
-
----
-
-<div align="center">
-  <img src="Soduto/App Icons/Soduto.png" alt="Soduto Logo" width="200"/>
-  <h1 style="font-weight: 700; font-size: 4em; margin: 0; padding-top: 0;">Soduto</h1>
-  <div style="margin-bottom: 1em">
-  <a href="https://github.com/sannidhyaroy/soduto/blob/nightly/LICENSE"><img alt="GPL Licensed" src="https://img.shields.io/github/license/sannidhyaroy/soduto?style=flat-square&logo=spdx&logoColor=white&color=B0BB88"></a>
-  <a href="https://github.com/sannidhyaroy/soduto/commits/nightly"><img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/sannidhyaroy/soduto?style=flat-square&logo=sourcetree&logoColor=white&color=B0BB88"></a>
-  <a href="https://github.com/sannidhyaroy/soduto/releases/latest"><img alt="GitHub Release Date" src="https://img.shields.io/github/release-date/sannidhyaroy/soduto?style=flat-square&logo=docsdotrs&logoColor=white&color=B0BB88"></a>
-  <a href="https://github.com/sannidhyaroy/soduto/releases"><img alt="GitHub Release Downloads" src="https://img.shields.io/github/downloads/sannidhyaroy/soduto/total?style=flat-square&logo=icloud&logoColor=white&color=B0BB88"></a>
-  <a href="https://discord.gg/CEWxVVNHAe"><img alt="Soduto Labs Discord Server" src="https://img.shields.io/discord/1475760167197868123?style=flat-square&logo=discord&logoColor=white&label=Soduto%20Labs&color=B0BB88"></a>
-  </div>
-  <p>
-  Soduto is a KDE Connect compatible application for macOS. It allows better integration between your phones, desktops and tablets. For more information take a look at <a href="https://www.soduto.com">soduto.com</a>
-  </p>
-</div>
-
----
-## **Navigation**
-- [Installation](#installation)
-- [Roadmap](#roadmap)
-  - [Protocol Coverage](#protocol-coverage)
-  - [Quality of Life](#quality-of-life)
-  - [Beyond the Protocol](#beyond-the-protocol)
-- [Building](#building)
-- [Debugging](#debugging)
-- [Verifying Downloads](#verifying-downloads)
-- [Limitations](#limitations)
-  - [Clipboard Sync (Android 10+)](#clipboard-sync-android-10)
-  - [Storage Access (Android 11+)](#storage-access-android-11)
-  - [Sensitive Notification Content (Android 15+)](#sensitive-notification-content-android-15)
-- [Workarounds](#workarounds)
-  - [Clipboard Sync (Android 10+)](#clipboard-sync-android-10-1)
-  - [Storage Access (Android 11+)](#storage-access-android-11-1)
-  - [Sensitive Notification Content (Android 15+)](#sensitive-notification-content-android-15-1)
-- [Troubleshooting](#troubleshooting)
-- [Documentation & Resources](#documentation--resources)
-- [Get in touch](#get-in-touch)
-- [Star History](#star-history)
-- [FAQ](#faq)
-- [License](#license)
----
-## Installation
-
-Until a signed release is published, download a successful build's
-`Soduto-unsigned.zip` artifact from [GitHub Actions](https://github.com/hidoba/Soduto/actions/workflows/build.yml),
-or build locally using the instructions below. These artifacts are unsigned
-and not notarized. They are intended for testing, not an automatic installation.
-For a normal signed development build, use Xcode and your own Apple Developer
-team via `LocalConfig.xcconfig`.
-
-This fork uses manual updates from [our releases](https://github.com/hidoba/Soduto/releases).
-The app's **Fork Releases on GitHub…** item opens that page. Upstream Sparkle
-updates cannot replace this build automatically.
-
----
-## Roadmap
-
-### Protocol Coverage
-
-Soduto implements the following KDE Connect plugin features (compatible with any KDE Connect device):
-
-#### Notifications
-- [x] Receive: Mirror remote device notifications on macOS
-- [ ] Send: Send macOS notifications to remote devices
-
-#### Clipboard
-- [x] Receive: Receive clipboard content from remote devices
-- [x] Send: Send macOS clipboard content to remote devices
-
-#### File Sharing
-- [x] Receive: Receive shared files, links, and text from remote devices (files are saved in the Downloads folder)
-- [x] Send: Share files, links, and text to remote devices via Share extension, drag and drop to menu bar, or `Send Files` option
-- [x] Browse storage: Access remote device filesystem via SFTP
-
-#### Battery Status
-- [x] Receive: View remote device battery level and charging status
-- [x] Send: Send macOS battery status to remote devices
-
-#### Media Control (MPRIS)
-- [x] Receive: Control remote device music/video playback from Dashboard or macOS Now Playing Module
-- [x] Send: Control macOS music/video playback from remote devices (experimental due to Apple's Private API)
-
-#### System Volume
-- [x] Receive: View and Control audio streams on remote device from Mac
-- [x] Send: View and Control audio streams on Mac from remote device
-
-#### Telephony
-- [x] Receive: View incoming call and SMS notifications from remote devices
-
-#### SMS Window
-- [x] Receive: View SMS of remote devices
-- [x] Send: Send SMS from macOS
-
-#### Remote Input
-- [x] Receive: Use remote device as keyboard and touchpad for macOS
-- [x] Send: Use macOS to control remote device input (experimental)
-
-#### Ping
-- [x] Receive: Receive ping messages from remote devices
-- [x] Send: Send ping messages to remote devices
-
-#### Run Commands
-- [x] Receive: Execute macOS commands from remote devices
-- [x] Send: Execute predefined commands on remote devices
-
-#### Find My Device
-- [x] Receive: Make macOS play an alarm sound to locate it
-- [x] Send: Make remote device play an alarm sound to locate it
-
-#### Lock
-- [x] Receive: View remote device lock status, and lock/unlock this Mac remotely (unlock won't succeed if the remote device is Android or macOS, since neither OS exposes an unlock API)
-- [x] Send: Report macOS lock status to remote devices, and lock/unlock the remote device (same unlock caveat applies)
-
-#### Connectivity Report
-- [x] Receive: Monitor remote device network connectivity status
-
-#### Presentation Remote
-- [x] Receive: Use remote device as presentation remote for macOS
-
-#### Contacts
-- [x] Receive: Synchronize contacts between macOS and remote devices
-
-#### Digitizer
-- [x] Receive: Use remote device as pressure-sensitive drawing tablets
-
-### Quality of Life
-
-- [x] Call Pause: Automatically pause macOS media during device calls
-- [x] Soduto Share: Share files, links, and text to remote devices straight from the native macOS Share Sheet in any app
-- [x] OTP Extraction: One-tap copy action on every notification's extracted OTP, plus automatic clipboard copy for live notifications (skipped during the initial sync catch-up)
-- [ ] Shortcuts App Integration: Expose Soduto actions as native Shortcuts app intents for custom automations
-- [ ] CLI Tool: A companion command-line tool for scripting and headless device actions
-- [ ] Proximity Media: Automatically pause Mac media when you step away from your desk with your phone still on the same network, and resume when you're back
-- [ ] Proximity Lock: Automatically lock your Mac when you step away from your desk with your phone still on the same network
-- [ ] Lock on Disconnect: Lock your Mac automatically if your phone fully disconnects from the network (opt-in, with a warning that it can trigger even while you're still at your desk, e.g. if you turn off your phone's WiFi on purpose)
-- [ ] Native Menubar Widgets: Desktop widgets for at-a-glance device status
-- [ ] Shake to Send: Copy a file (or share it via the Share Extension or menu bar drag) on the Mac, then shake the target phone within a few seconds to send it there instantly, an alternative to picking a device from a list
-
-### Beyond the Protocol (both devices require Soduto sibling clients)
-
-- [x] Webcam (experimental): Stream live video from a remote device's camera to macOS and use it as webcam
-
----
-## Building
-
-- Clone this repo:
-
-  ```bash
-  git clone git@github.com:sannidhyaroy/Soduto.git Soduto && cd Soduto
-  ```
-  <details><summary>Clone using HTTPS? 👀</summary>
-
-  Run this command, instead of the above one:
-    ```bash
-    git clone https://github.com/sannidhyaroy/Soduto.git Soduto && cd Soduto
-    ```
-
-  </details>
-
-> [!NOTE]
-> Make sure you are signed in to Xcode with your Apple ID first (`Xcode → Settings → Apple Accounts`). This works for both free and paid Apple Developer accounts.
-
-- Set up your local build configuration:
-
-  - Create the local build configuration file from the template:
-
-    ```bash
-    cp -v LocalConfig.xcconfig.example LocalConfig.xcconfig
-    ```
-
-  - Open `LocalConfig.xcconfig` and fill in your `DEVELOPMENT_TEAM`. This is your Apple Developer Team ID, a 10-character alphanumeric string tied to your Apple ID. You can find it by running:
-
-    ```bash
-    security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject | grep -o 'OU=[A-Z0-9]*' | sed 's/OU=//'
-    ```
-
-- Open the `.xcodeproj` in Xcode.
-
-  - Swift Package dependencies (`swift-certificates`, `SwiftNIO`, `NIOSSL`, `NIOSSH`, `Citadel`, `Sparkle`, etc.) resolve automatically on first build.
-
-- Build target `Soduto` (`Cmd+B`).
-
-> [!IMPORTANT]
-> **Do not** set the Team in Signing & Capabilities, that would write your Team ID into `project.pbxproj`, dirtying the project file with personal development team identifiers. The `LocalConfig.xcconfig` approach keeps `project.pbxproj` clean for everyone.
-
----
-## Debugging
-
-Soduto uses Apple's Unified Logging system (`os.Logger`). Logs are organized by subsystem and categories:
-
-| Target | Subsystem | Categories |
-|--------|-----------|------------|
-| **Soduto** | `com.soduto.Soduto` | `general`, `network`, `device`, `config`, `services`, `ui` |
-| **Soduto Files** | `com.soduto.Soduto-Files` | `general`, `filesystem`, `ui` |
-| **Soduto Share** | `com.soduto.Soduto.Soduto-Share` | `general`, `sharing`, `ui` |
-
-### View logs in real-time:
-```bash
-# Show all messages (debug, info, notice, error) for Soduto
-log stream --predicate 'subsystem == "com.soduto.Soduto"' --level debug
-
-# Show all messages for Soduto Files
-log stream --predicate 'subsystem == "com.soduto.Soduto-Files"' --level debug
-
-# Show all messages for Soduto Share
-log stream --predicate 'subsystem == "com.soduto.Soduto.Soduto-Share"' --level debug
-
-# Show all messages from ALL Soduto components
-log stream --predicate 'subsystem BEGINSWITH "com.soduto.Soduto"' --level debug
-
-# Show only info and above (excludes debug logs) for Soduto
-log stream --predicate 'subsystem == "com.soduto.Soduto"' --level info
-```
-
-The `--level debug` flag shows messages at debug level **and above** (info, notice, error, fault).
-
-### Enable debug message persistence:
-By default, debug messages are only kept in memory and not saved to disk. To persist them:
-
-```bash
-# Enable debug persistence for main app
-sudo log config --subsystem com.soduto.Soduto --mode level:debug
-
-# Enable debug persistence for file browser
-sudo log config --subsystem com.soduto.Soduto-Files --mode level:debug
-
-# Enable debug persistence for share extension
-sudo log config --subsystem com.soduto.Soduto.Soduto-Share --mode level:debug
-```
-
-This allows you to view debug messages in Console.app after they occur. To revert to default behavior:
-
-```bash
-# Revert main app
-sudo log config --subsystem com.soduto.Soduto --mode level:default
-
-# Revert file browser
-sudo log config --subsystem com.soduto.Soduto-Files --mode level:default
-
-# Revert share extension
-sudo log config --subsystem com.soduto.Soduto.Soduto-Share --mode level:default
-```
-
-### View logs in the Console:
-- Open `Console.app`
-- In the search field, enter the subsystem for the target you want to view:
-  - `subsystem:com.soduto.Soduto` - Main app
-  - `subsystem:com.soduto.Soduto-Files` - File browser
-  - `subsystem:com.soduto.Soduto.Soduto-Share` - Share extension
-  - `subsystem BEGINSWITH com.soduto.Soduto` - All components
-- Filter by category for targeted debugging:
-  - `category:network`, `category:services`, `category:device` (main app)
-  - `category:filesystem` (file browser)
-  - `category:sharing` (share extension)
-- Enable "Include Debug Messages" in the Action menu to see debug-level logs
-
-**Warning:** Debug logging may include sensitive data (clipboard contents, passwords). Only enable its persistence during debugging and revert to default when done.
-
----
-## Verifying Downloads
-
-Each successful CI build includes `Soduto-unsigned.zip.sha256` beside the app
-archive. Verify the download with:
+A macOS KDE Connect client focused on clipboard sync, pairing, connection recovery,
+and useful diagnostics. This fork combines the upstream `fix/network-reliability`
+and `feat/refine-services` branches, with additional fixes for those connection paths.
+
+**Current release: [3.2.1 (build 28)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-28-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-28-macos-universal.zip.sha256)
+· [Release notes](docs/releases/3.2.1.md)
+
+This is an **unsigned, unnotarized pre-release** for **macOS 14 or newer**, with a
+universal **Apple Silicon (`arm64`) and Intel (`x86_64`)** executable. Automated
+checks and the full Release build pass; real-device Ubuntu clipboard, pairing,
+sleep/wake, and Wi-Fi recovery testing remains pending.
+
+## What changed
+
+### Clipboard
+
+- Keep observing local copies while disconnected, so a new offline copy is not
+  replaced by older text when a peer reconnects.
+- Check for copies between timer ticks before comparing reconnect timestamps.
+  Non-text copies also advance freshness, protecting newly copied images and files.
+- Prevent identical text and previously seen generations from circulating through
+  multiple peers. Forward fresh generations across a hub even when it already has
+  that text, without rewriting the pasteboard.
+- Preserve other pasteboard representations when the text is already identical.
+- Give rapid copies increasing timestamps, converge simultaneous edits, and allow
+  deliberately copying earlier text again. Ordinary KDE Connect clipboard packets
+  remain live edits regardless of the sender's clock.
+- Refresh negotiated clipboard capabilities and service dispatch after reconnects,
+  and discard obsolete queued clipboard copies.
+
+### Pairing and reconnects
+
+- Support KDE Connect protocol versions **7 and 8**, including v8 request timestamp
+  validation and certificate-based verification codes.
+- Require the peer's TLS certificate before pairing can succeed. Ignore duplicate
+  confirmations without creating reply loops; fresh re-pair requests ask for approval.
+- Cancel unfinished pairing requests and timers on disconnect while preserving
+  established certificate pins during ordinary connection loss.
+- Keep competing connections and queued results from invalidating a verification
+  prompt. Superseded sockets cannot apply delayed clipboard or unpair packets.
+- Process connection, packet, and pairing callbacks in order on the main queue,
+  including the handoff before the first service packet arrives.
+- Reset old connections after wake and network changes. Connection initialization
+  has a **10-second deadline**, with its last phase recorded if it times out.
+
+### Connection badge
+
+The existing menu bar icon now has a **small badge over its upper-right corner**.
+It keeps the original square width and updates without opening the menu.
+
+| Paired, reachable devices | Badge |
+| --- | --- |
+| None | `×` |
+| 1–99 | The connected count |
+| 100 or more | `99+` |
+
+Hover over the icon for the full count. The badge counts connected, paired devices,
+not discovery results or individual sockets. Its tooltip and accessibility label
+also update with the connection state.
+
+![Connection badge examples in dark and light appearances](docs/images/menu-bar-connection-badge.png)
+
+Examples above: `×`, `1`, `12`, `99`, and `99+`. The image was rendered with native
+AppKit using the actual badge drawing code.
+
+### Persistent diagnostics
+
+The **Diagnostics** menu provides **Export Diagnostic Bundle…**, **Open Diagnostic
+Logs**, **Detailed Packet Logging**, and **Reconnect All Devices**.
+
+- A rotating JSON journal retains **four files of up to 5 MiB each** across restarts.
+- Events include sleep/wake, network changes, discovery, TCP/TLS handshakes, pairing,
+  packet dispatch, clipboard decisions, and transfer completion or failure.
+- Session, connection, and temporary device aliases let related events be followed
+  through the timeline. Exports include a runtime snapshot.
+- The journal excludes packet bodies, clipboard text, notifications, filenames,
+  file contents, IP/MAC addresses, certificates, and private keys. Clipboard replay
+  fingerprints stay in bounded memory and are never logged. No logs are uploaded.
+
+When something fails, export a bundle **before** using **Reconnect All Devices**.
+See [diagnostics and testing](docs/diagnostics.md) for the event guide, storage
+locations, privacy details, and real-device test checklist.
+
+## Validation and compatibility
+
+**47 automated checks pass**, alongside a complete Release build of the app and
+extensions on macOS 26:
+
+| Checks | Count | Coverage |
+| --- | ---: | --- |
+| Native reliability tests | 18 | Clipboard state, recovery policy, journal privacy, persistence, rotation, and ZIP export |
+| Clipboard integration scenarios | 13 | Offline copies, reconnect freshness, legacy clients, direction settings, and multi-peer relays |
+| Pairing/transport integration scenarios | 16 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
+| **Total** | **47** | |
+
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39859010761)
+· [Built source revision: `da83ebc`](https://github.com/hidoba/Soduto/commit/da83ebc902b680c6191adf0a8b8591dd07f08341)
+
+The downloaded archive's checksum, universal executable, version **3.2.1 (28)**,
+fork bundle ID, source revision, and update settings were verified. The menu badge
+was also compiled and rendered in light and dark appearances.
+
+The integration scenarios use fake clipboard, transport, certificate storage, and
+windows; they do not exercise the actual Ubuntu peer. The reported target setup is
+Ubuntu GNOME/Wayland with KDE Connect **25.12.3**. End-to-end compatibility and repeated
+sleep/Wi-Fi recovery with that setup still need real-device validation. GNOME/Wayland
+clipboard integration also depends on the Linux desktop; see the diagnostic guide.
+Protocol support is not a guarantee that every inherited service works with every
+KDE Connect client. The additional fixes here focus on clipboard, pairing, and their
+shared connection lifecycle.
+
+## Download and install
+
+1. Download the ZIP and matching `.sha256` file from
+   [release 3.2.1 (28)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+2. In the directory containing both downloads, verify the archive:
+
+   ```sh
+   shasum -a 256 -c Soduto-3.2.1-28-macos-universal.zip.sha256
+   ```
+
+3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
+   unsigned and not notarized; macOS may block it. For a development-signed build,
+   use Xcode with your own Apple Developer team as described below.
+4. Quit other Mac KDE Connect/Soduto clients before testing, then pair this fork
+   as a new Mac device.
+
+The fork uses bundle ID **`com.hidoba.Soduto`**, with its own preferences and
+keychain identity names. Automatic upstream Sparkle updates are disabled. Use
+**Fork Releases on GitHub…** in the app for manual updates from
+[our releases](https://github.com/hidoba/Soduto/releases).
+
+The checksum verifies download integrity; it is not a code-signing or notarization
+claim. Additional CI artifacts remain available from [GitHub Actions](https://github.com/hidoba/Soduto/actions/workflows/build.yml).
+
+## Build and run the checks
+
+Use **Xcode 26 or newer**. Clone this fork's default development branch:
 
 ```sh
-shasum -a 256 -c Soduto-unsigned.zip.sha256
+git clone --branch codex/reliability-diagnostics https://github.com/hidoba/Soduto.git
+cd Soduto
+cp LocalConfig.xcconfig.example LocalConfig.xcconfig
+open Soduto.xcodeproj
 ```
 
-The checksum detects accidental changes; it is not a signing/notarization claim.
-The upstream release signing key does not authenticate fork artifacts. Source
-revision and build logs are attached to each workflow run.
+Set your `DEVELOPMENT_TEAM` in the untracked `LocalConfig.xcconfig`; keep the fork's
+bundle ID. Let Xcode resolve the Swift package dependencies, then build the
+`Soduto` scheme. Local signing settings belong in that file rather than the shared
+project file.
 
----
-## Limitations
+Run the regression checks with the Xcode toolchain selected:
 
-#### Clipboard Sync (Android 10+)
-Google introduced privacy restrictions on Android 10 and higher that prevent apps from accessing clipboard data unless the app is the default input method editor (IME) or is currently in focus. This affects seamless clipboard sync between KDE Connect and Soduto. Your clipboard will automatically sync to your other devices when you copy something on your mac, however you will have to manually tap on `Send Clipboard` in the KDE Connect app every time you want to sync your Android's clipboard to your mac ([see the workaround](#clipboard-sync-android-10-1)).
-
-#### Storage Access (Android 11+)
-On Android 11 and higher, you may not be able to add the root location of your Internal Storage or your Download folder to KDE Connect's `Filesystem expose` locations due to Google's privacy changes ([see the workaround](#storage-access-android-11-1)).
-
-#### Sensitive Notification Content (Android 15+)
-On Android 15 and higher, the system hides sensitive notification content (such as passwords, OTPs, and other sensitive information) from applications by default. This means Soduto will display "Sensitive notification content hidden" instead of the actual content. This restriction also affects automatic OTP copying in Soduto. KDE Connect will not receive sensitive notifications unless you explicitly grant the `RECEIVE_SENSITIVE_NOTIFICATIONS` permission ([see the workaround](#sensitive-notification-content-android-15-1)).
-
----
-## Workarounds
-
-#### Clipboard Sync (Android 10+)
-If you have `Riru` or `Zygisk`, you can bypass the clipboard restriction on Android 10 or higher by using [Kr328's Clipboard Whitelist](https://github.com/Kr328/Riru-ClipboardWhitelist) module and then tick `KDE Connect`/`Zorin Connect` from the `Clipboard Whitelist` app. If you're on Android 13 and the module isn't working for you, try [Xposed Clipboard Whitelist](https://github.com/GamerGirlandCo/xposed-clipboard-whitelist) (remember to select `System Framework` for the module scope). You need to have `Xposed Framework` for the `Xposed Clipboard Whitelist` module to work.
-
-#### Storage Access (Android 11+)
-[NoStorageRestrict](https://github.com/Xposed-Modules-Repo/com.github.dan.nostoragerestrict) is an `Xposed Module` that removes the restriction when selecting folders(like Internal Storage, Android, Download, data, obb) through file manager on Android 11 and higher. There is a [Magisk module](https://github.com/DanGLES3/NoStorageRestrict) for this as well but I haven't tested the Magisk Module version yet, so use it at your own risk ⚠️.
-
-#### Sensitive Notification Content (Android 15+)
-The recommended approach is to grant KDE Connect the `RECEIVE_SENSITIVE_NOTIFICATIONS` permission using ADB (Android Debug Bridge). This will allow sensitive notifications to be delivered normally and enable automatic OTP copying.
-
-- **Set up ADB**: Follow the [official Android ADB setup guide](https://developer.android.com/tools/adb).
-
-- **Connect your device**: Connect your phone via USB or wireless ADB.
-
-- **Grant the permission**: Run the following command
-  ```bash
-  adb shell cmd appops set --user 0 org.kde.kdeconnect_tp RECEIVE_SENSITIVE_NOTIFICATIONS allow
-  ```
-
-- **If permission monitoring error occurs**: If you see this error, follow these steps:
-  ```
-  java.lang.SecurityException: uid 2000 does not have android.permission.MANAGE_APP_OPS_MODES
-  ```
-   - Go to Developer Options and enable "Disable permission monitoring"
-   - Reboot your phone
-   - Run the ADB command again
-
-- **Reboot**: Reboot your phone for the changes to take effect.
-
-After completing these steps, sensitive notifications (including OTPs) will be delivered to Soduto, and automatic OTP copying will work as expected.
-
----
-## Troubleshooting
-
-### 1. Soduto Share doesn't show up in the share sheet
-
-Go to `System Preferences → General → Login Items & Extensions → Sharing` info button, and ensure `Soduto Share` toggle is enabled. If you still have issues, keep reading.
-
-
-<details><summary>On macOS (14) Sonoma and earlier?</summary>
-<p>
-
-Go to `System Preferences → Privacy & Security → Extensions → Sharing`, and ensure `Soduto Share` is checked. If you still have issues, keep reading.
-
-</p>
-</details> 
-
-If `Soduto Share` doesn't appear in the share menu, only when multiple files are selected, macOS may have cached a stale extension registration. To fix this:
-  1. Check for stale plugin registrations:
-     ```bash
-     pluginkit -m -Dv -i com.soduto.Soduto.Soduto-Share
-     ```
-  2. If multiple entries appear (or entries pointing to non-existent paths), remove them:
-     ```bash
-     pluginkit -r "<path shown in the output>"
-     ```
-  3. Restart your Mac, then open Soduto. The extension should re-register automatically with the correct rules.
-
-### 2. SSL certificate errors after re-pairing
-
-If you see SSL/TLS certificate errors in Console.app after re-pairing your device, the remote device is rejecting Soduto's certificate.
-
-```
-Connection error: NIOSSL.NIOSSLError.handshakeFailed(NIOSSL.BoringSSLError.sslError([Error: 268436502 error:10000416:SSL routines:OPENSSL_internal:SSLV3_ALERT_CERTIFICATE_UNKNOWN at /Users/sannidhyaroy/Library/Developer/Xcode/DerivedData/Soduto-djazogzlahmuayfoqwqoflmgulsi/SourcePackages/checkouts/swift-nio-ssl/Sources/CNIOBoringSSL/ssl/tls_record.cc:484]))
+```sh
+swift test
+python3 scripts/test-clipboard-service.py
+python3 scripts/test-pairing-transport.py
 ```
 
-This `SSLV3_ALERT_CERTIFICATE_UNKNOWN` error means the remote device is rejecting Soduto's certificate as "unknown"
+The [build workflow](.github/workflows/build.yml) contains the complete unsigned
+Release build and packaging commands. The historical certificate tests are not
+run there because they modify the user's default keychain.
 
-<details><summary>Click here for Legacy versions (CocoaAsyncSocket)</summary>
-<p>
+## Upstream work and attribution
 
-```
-socketDidDisconnect(<<GCDAsyncSocket: 0x...>> withError:<Error Domain=kCFStreamErrorDomainSSL Code=-9829 "(null)" UserInfo={NSLocalizedRecoverySuggestion=Error code definition can be found in Apple's SecureTransport.h}>)
-```
+This fork integrates:
 
-This is error code -9829 (`errSSLPeerCertUnknown`), which means the remote device is rejecting Soduto's certificate as "unknown"
+- [`fix/network-reliability` at `ca7db3a`](https://github.com/sannidhyaroy/Soduto/commit/ca7db3a): connection and discovery recovery work.
+- [`feat/refine-services` at `afcc62d`](https://github.com/sannidhyaroy/Soduto/commit/afcc62d): service and interface refinements.
 
-</p>
-</details> 
+The inherited application includes notifications, file sharing/SFTP, battery and
+connectivity reporting, media/volume controls, remote input, commands, and other
+KDE Connect services. See the [upstream project](https://github.com/sannidhyaroy/Soduto)
+for its broader feature documentation. Inclusion here does not mean those services
+were all fixed or validated in this clipboard/pairing work.
 
-**When does this happen?**
-
-This occurs when Soduto's keychain entries are cleared (manually or by reinstalling) but the app's preferences remain. Soduto generates a new SSL certificate with the same device ID but different cryptographic content. The remote KDE Connect app has cached the old certificate and rejects the new one as a mismatch.
-
-**Symptoms:**
-- Device pairing appears to succeed
-- Main connection works initially
-- Secondary connections fail (file transfers, notification icons, etc.)
-- The paired device may disconnect and fail to reconnect after restarting Soduto
-
-**Note:** With the current SwiftNIO implementation, previously paired devices usually reconnect successfully despite this error appearing in logs. However, devices that were paired before the certificate was regenerated and never re-paired will not connect.
-
-**Why does this happen?**
-
-Soduto and KDE Connect use SSL/TLS with self-signed certificates to secure communications. Each device stores the other's certificate during pairing. KDE Connect on Android caches certificate data aggressively, and this cache persists even after unpairing. When Soduto presents a new certificate (same device ID, different key), KDE Connect's cached data causes validation to fail.
-
-**Solution:**
-
-1. Unpair the device from both Soduto (on Mac) and KDE Connect (on Android/Linux)
-2. On Android: Go to `Settings → Apps → KDE Connect → Storage → Clear Cache`
-   - Note: Clear **cache** only, not app data (clearing app data will remove all your KDE Connect settings)
-3. On Mac (optional): Remove Soduto's preferences to get a fresh device ID:
-> [!CAUTION]
->  Running the following command is optional and dangerous as it will delete your saved Soduto Preferences. Only run when you absolutely want a fresh device ID and are fine with reconfiguring lost preferences
-> ```bash
-> defaults delete com.soduto.Soduto
-> ```
-4. Re-pair the devices
-
-After clearing the cache, the new certificate will be accepted and cached correctly.
-
----
-## Documentation & Resources
-
-For comprehensive information about KDE Connect features, limitations, configuration, and troubleshooting across all platforms, visit the [official KDE Connect Wiki](https://userbase.kde.org/KDEConnect). While the wiki primarily focuses on Linux environments, a lot of the information will still be useful for macOS and Android.
-
----
-## Get in touch
-
-For real-time chat, testing nightly builds, and shaping where Soduto goes, join [Soduto Labs](https://discord.gg/CEWxVVNHAe).
-
-To ask a question, offer suggestions or share an idea, please use the [discussions tab](https://github.com/sannidhyaroy/soduto/discussions) of this repository.
-
-If you spot any bugs or vulnerabilities, please [create an issue](https://github.com/sannidhyaroy/soduto/issues/). It's always a good idea to make sure there aren't any similar issues open, before creating a new one!
-
----
-
-### Contributors
-
-This project only exists because of all the people who have contributed.
-
-<a href="https://github.com/sannidhyaroy/Soduto/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=sannidhyaroy/Soduto" />
-</a>
-
----
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=sannidhyaroy%2FSoduto&type=date&legend=bottom-right">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sannidhyaroy/Soduto&type=date&theme=dark&legend=bottom-right" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sannidhyaroy/Soduto&type=date&legend=bottom-right" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sannidhyaroy/Soduto&type=date&legend=bottom-right" />
- </picture>
-</a>
-
----
-
-## FAQ
-
-### Is this the official version of Soduto?
-
-No, this is not the official version of Soduto. Head over to their [official site](https://www.soduto.com) or [GitHub Repo](https://github.com/soduto/soduto) for the official version.
-
-### Why another version of Soduto?
-
-The development for the official version seems to have been inactive for a very long time. Thus, a lot of Soduto's features were broken on recent versions of macOS. This is why, I have tried to replace some deprecated code in my repo.
-
-### Is this app safe? Why does macOS show a warning when opening Soduto for the first time?
-
-The code is public, so instead of taking someone else's word for it, it's better to review it yourself if the app is safe.
-
-The reason macOS shows a prompt saying that this app is from an unidentified developer is because I have a free Apple Developer Account and not a paid one, thus the builds of Soduto released by me are not notarized. If you build the app yourself for your own mac, you won’t get the warning. Head over to the [building](#building) section to do so.
-
-### Why is the app not notarized?
-
-Developers can't send an app for notarization with a free Apple Developer Account. I am a student and developing apps for the Apple Platform is neither my job nor my hobby. Neither can I nor do I want to pay Apple a hefty amount of $99 every year for the privilege of developing apps for their platform.
-
-### Why is this not on the Mac App Store?
-
-Same as above. I also don't want to have to go through their app review process.
-
----
-## License
-
-Soduto is licensed under the [GNU General Public License v3.0](https://github.com/sannidhyaroy/soduto/blob/nightly/LICENSE).
+Thanks to [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto) and the
+original [soduto/Soduto](https://github.com/soduto/Soduto). Their copyright and
+attribution remain in place. Soduto is distributed under the [GNU GPL v3](LICENSE).
