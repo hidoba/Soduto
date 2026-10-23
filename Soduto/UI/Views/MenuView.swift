@@ -1,107 +1,80 @@
-//
-//  MenuView.swift
-//  Soduto
-//
-//  Created by Giedrius on 2017-02-19.
-//  Copyright © 2017 Soduto. All rights reserved.
-//
+// Copyright © 2026 Soduto contributors. Licensed under GPL v3.
 
-import Foundation
-import Cocoa
+import AppKit
 
-/// TODO: Finish or remove
-/*public class MenuView: NSButton {
-    
-    // MARK: Properties
-    
-    private let label: NSTextField
-    private let disclosureButton: NSButton
-    private let imageView: NSImageView
-    private var trackingArea: NSTrackingArea?
-    
-    // MARK: Init / Deinit
-    
-    init(menuItem: NSMenuItem) {
-        self.label = NSTextField(labelWithString: "abcdefghijklmnopqrstuvzxyzABCDEFGHIJKLMNOPQRSTUVZXYZ")
-        self.label.font = menuItem.menu?.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize())
-        self.disclosureButton = NSButton()
-        self.imageView = NSImageView()
-//        self.cell = NSMenuItemCell()
-//        self.cell.menuItem = menuItem
-//        self.cell.title = menuItem.title
-//        self.cell.font = self.label.font
-        
-        super.init(frame: NSRect(x: 0, y: 0, width: 100, height: self.label.frame.size.height + 2))
-        
-        self.isBordered = false
-        self.alignment = .natural
-        self.setButtonType(.momentaryLight)
-        if #available(OSX 10.12.2, *) {
-            self.bezelColor = NSColor.selectedMenuItemColor
+/// Device rows stay native menu items so submenu tracking, keyboard navigation,
+/// accessibility, and the user's appearance settings continue to work.
+@MainActor
+enum DeviceMenuPresentation {
+    static func apply(to item: NSMenuItem, name: String, type: String,
+                      connected: Bool, battery: Int?, charging: Bool,
+                      networks: [String] = []) {
+        let state = connected ? "Connected" : "Offline"
+        var details = [state]
+        if connected, let battery, (0...100).contains(battery) {
+            details.append("\(battery)%" + (charging ? " · Charging" : " battery"))
         }
-        self.font = self.label.font
-        self.title = menuItem.title
-        self.label.stringValue = menuItem.title
-//        self.label.frame = self.cell.titleRect(forBounds: self.bounds)
-//        self.addSubview(self.label)
-//
-//        self.addSubview(self.imageView)
-//        
-//        self.disclosureButton.bezelStyle = .disclosure
-//        self.addSubview(self.disclosureButton)
-        
-        self.autoresizingMask = [.viewWidthSizable, .viewMinYMargin]
+        if connected {
+            // Peer-provided labels stay small and cannot add extra menu lines.
+            let labels = networks.prefix(2).compactMap { value -> String? in
+                let label = value.filter { !$0.isNewline && !$0.isWhitespace }.prefix(12)
+                return label.isEmpty || label == "Unknown" ? nil : String(label)
+            }
+            details.append(contentsOf: labels)
+        }
+        let summary = details.joined(separator: " · ")
+        item.title = name
+        item.toolTip = "\(name) — \(summary)"
+        if #available(macOS 14.4, *) {
+            // Keep the standard title on 14.x: attributed titles hide its subtitle.
+            item.attributedTitle = nil
+            item.subtitle = summary
+        } else {
+            item.attributedTitle = NSAttributedString(string: "\(name) — \(summary)")
+        }
+        item.image = icon(type: type, connected: connected)
+        // macOS 27 normally hides NSMenuItem images. Use its public Objective-C
+        // property dynamically so releases can still build with the macOS 26 SDK.
+        let visibilitySetter = NSSelectorFromString("setPreferredImageVisibility:")
+        if item.responds(to: visibilitySetter) {
+            item.setValue(1, forKey: "preferredImageVisibility") // .visible
+        }
     }
-    
-    public required init?(coder: NSCoder) {
-        fatalError("Not available")
+
+    static func icon(type: String, connected: Bool) -> NSImage {
+        let symbol: String
+        let accent: NSColor
+        switch type {
+        case "desktop": (symbol, accent) = ("desktopcomputer", .systemOrange)
+        case "laptop": (symbol, accent) = ("laptopcomputer", .systemBlue)
+        case "phone": (symbol, accent) = ("iphone", .systemGreen)
+        case "tablet": (symbol, accent) = ("ipad", .systemTeal)
+        case "tv": (symbol, accent) = ("tv", .systemPurple)
+        default: (symbol, accent) = ("network", .secondaryLabelColor)
+        }
+        let color = connected ? accent : .secondaryLabelColor
+        let size = NSSize(width: 30, height: 30)
+        let image = NSImage(size: size, flipped: false) { _ in
+            let tile = NSRect(x: 1, y: 1, width: 27, height: 27)
+            color.withAlphaComponent(0.14).setFill()
+            NSBezierPath(roundedRect: tile, xRadius: 7, yRadius: 7).fill()
+            if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))?
+                .withSymbolConfiguration(.init(paletteColors: [color])) {
+                let factor = min(17 / glyph.size.width, 17 / glyph.size.height)
+                let target = NSSize(width: glyph.size.width * factor, height: glyph.size.height * factor)
+                glyph.draw(in: NSRect(x: tile.midX - target.width / 2,
+                                      y: tile.midY - target.height / 2,
+                                      width: target.width, height: target.height))
+            }
+            let dot = NSRect(x: 23, y: 1, width: 6, height: 6)
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(ovalIn: dot.insetBy(dx: -1, dy: -1)).fill()
+            (connected ? NSColor.systemGreen : .tertiaryLabelColor).setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
-    
-    
-//    override public func draw(_ dirtyRect: NSRect) {
-//        super.draw(dirtyRect)
-//        
-//        if self.isMouseOver {
-//            NSColor.selectedMenuItemColor.setFill()
-//            NSRectFillUsingOperation(dirtyRect.intersection(self.bounds), .copy)
-//        }
-//        
-////        self.cell.isHighlighted = self.isMouseOver
-////        self.cell.drawBorderAndBackground(withFrame: self.bounds, in: self)
-////        self.cell.draw(withFrame: self.bounds, in: self)
-//    }
-    
-//    override public func updateTrackingAreas() {
-//        super.updateTrackingAreas()
-//        
-//        if let trackingArea = self.trackingArea {
-//            self.removeTrackingArea(trackingArea)
-//        }
-//        let trackingArea = NSTrackingArea(rect: self.bounds, options: [.activeAlways, .mouseEnteredAndExited], owner: nil, userInfo: nil)
-//        self.addTrackingArea(trackingArea)
-//        self.trackingArea = trackingArea
-//    }
-//    
-//    override public func mouseEntered(with event: NSEvent) {
-//        super.mouseEntered(with: event)
-//        self.cell.isHighlighted = true
-//        self.setNeedsDisplay(self.bounds)
-//    }
-//    
-//    override public func mouseExited(with event: NSEvent) {
-//        super.mouseExited(with: event)
-//        self.cell.isHighlighted = false
-//        self.setNeedsDisplay(self.bounds)
-//    }
-    
-    override public var allowsVibrancy: Bool {
-        return false
-    }
-    
-    
-    private var isMouseOver: Bool {
-        guard let mouseLocation = self.window?.mouseLocationOutsideOfEventStream else { return false }
-        let viewMouseLocation = self.convert(mouseLocation, from: nil)
-        return self.bounds.contains(viewMouseLocation)
-    }
-}*/
+}

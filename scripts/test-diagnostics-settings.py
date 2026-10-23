@@ -109,10 +109,11 @@ MainActor.assumeIsolated {
     controller.installDiagnosticsMenu(parent)
     let quitIndex = controller.statusBarMenu.index(of: quit)
     precondition(controller.statusBarMenu.item(at: quitIndex - 1) === parent)
-    precondition(!menu.autoenablesItems && menu.items.count == 5)
+    precondition(!menu.autoenablesItems && menu.items.count == 6)
     precondition(menu.items[0].state == .off && checkbox.state == .off)
     precondition(menu.items[1...3].allSatisfy { !$0.isEnabled })
-    menu.performActionForItem(at: 4)
+    precondition(menu.items[4].isSeparatorItem && !menu.items[5].isSeparatorItem)
+    menu.performActionForItem(at: 5)
     precondition(recoveries == 1 && contents() == stopped)
     menu.performActionForItem(at: 0)
     precondition(diagnostics.writeLogsEnabled && checkbox.state == .on && menu.items[1...3].allSatisfy(\.isEnabled))
@@ -125,6 +126,33 @@ MainActor.assumeIsolated {
     _ = tabs.view
     precondition(tabs.tabViewItems.contains { $0.label == "Diagnostics" })
     print("PASS: Settings and menu toggles synchronize, log actions disable when off, recovery remains available and Diagnostics is above Quit")
+
+    let deviceRow = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    let deviceActions = NSMenu(title: "Device actions")
+    deviceRow.submenu = deviceActions
+    DeviceMenuPresentation.apply(to: deviceRow, name: "Ubuntu desktop", type: "desktop",
+                                 connected: true, battery: nil, charging: false)
+    precondition(deviceRow.title == "Ubuntu desktop" && deviceRow.image != nil)
+    precondition(deviceRow.view == nil && deviceRow.submenu === deviceActions)
+    if #available(macOS 14.4, *) { precondition(deviceRow.subtitle == "Connected") }
+    if deviceRow.responds(to: NSSelectorFromString("setPreferredImageVisibility:")) {
+        precondition((deviceRow.value(forKey: "preferredImageVisibility") as? NSNumber)?.intValue == 1)
+    }
+    print("PASS: a desktop without battery reports still has a visible device icon, native subtitle and its original submenu")
+
+    DeviceMenuPresentation.apply(to: deviceRow, name: "Pixel phone", type: "phone",
+                                 connected: true, battery: 84, charging: true,
+                                 networks: ["LTE", "Unknown"])
+    if #available(macOS 14.4, *) {
+        precondition(deviceRow.subtitle == "Connected · 84% · Charging · LTE")
+    }
+    DeviceMenuPresentation.apply(to: deviceRow, name: "Pixel phone", type: "phone",
+                                 connected: false, battery: 84, charging: true, networks: ["LTE"])
+    if #available(macOS 14.4, *) { precondition(deviceRow.subtitle == "Offline") }
+    DeviceMenuPresentation.apply(to: deviceRow, name: "Pixel phone", type: "phone",
+                                 connected: true, battery: 150, charging: false, networks: ["5G\nInjected"])
+    precondition(!deviceRow.toolTip!.contains("150%") && !deviceRow.toolTip!.contains("\n"))
+    print("PASS: live battery/network updates preserve native rows and offline state removes stale service details")
 
     let relaunchFolder = temporary.appendingPathComponent("relaunch", isDirectory: true)
     var first: Diagnostics? = Diagnostics(userDefaults: preferences, directory: relaunchFolder)
@@ -161,6 +189,7 @@ with tempfile.TemporaryDirectory(prefix="soduto-diagnostics-settings-") as tempo
                       (root / "Soduto/UI/Controllers/PreferencesWindowController.swift").read_text() + checks)
     executable = temporary / "settings-tests"
     subprocess.run(["swiftc", str(root / "Soduto/Core/Diagnostics/DiagnosticEvent.swift"),
-                    str(root / "Soduto/Core/Diagnostics/DiagnosticLogStore.swift"), str(source),
+                    str(root / "Soduto/Core/Diagnostics/DiagnosticLogStore.swift"),
+                    str(root / "Soduto/UI/Views/MenuView.swift"), str(source),
                     "-o", str(executable)], check=True)
     subprocess.run([str(executable), str(temporary), *sys.argv[1:]], check=True)

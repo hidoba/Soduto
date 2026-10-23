@@ -33,31 +33,31 @@
                     <modifierMask key="keyEquivalentModifierMask"/>
                 </menuItem>
                 <menuItem isSeparatorItem="YES" id="XN7-yK-oPR"/>
-                <menuItem title="Launch on Login" keyEquivalent="l" id="tU8-jY-Cw3">
-                    <connections>
-                        <action selector="toggleLaunchOnLogin:" target="vQj-dd-GoX" id="tjq-3a-oye"/>
-                    </connections>
-                </menuItem>
-                <menuItem isSeparatorItem="YES" id="Zv9-hp-heD"/>
-                <menuItem title="Check for Updates" keyEquivalent="u" id="zow-ql-WNV"/>
-                <menuItem title="Dashboard" keyEquivalent="d" id="aDl-yH-XuU">
+                <menuItem title="Device Dashboard…" keyEquivalent="d" id="aDl-yH-XuU">
                     <connections>
                         <action selector="openDashboard:" target="vQj-dd-GoX" id="rR2-vZ-ooO"/>
                     </connections>
                 </menuItem>
-                <menuItem title="Preferences" keyEquivalent="," id="NNU-ep-Fgn">
+                <menuItem title="Preferences…" keyEquivalent="," id="NNU-ep-Fgn">
                     <connections>
                         <action selector="openPreferences:" target="vQj-dd-GoX" id="rrW-aH-Gim"/>
                     </connections>
                 </menuItem>
-                <menuItem isSeparatorItem="YES" id="NAb-Li-52a"/>
-                <menuItem title="About" id="sNE-CC-2Jm">
+                <menuItem title="About Soduto" id="sNE-CC-2Jm">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <connections>
                         <action selector="showAboutWindow:" target="vQj-dd-GoX" id="Z8y-Zi-KJK"/>
                     </connections>
                 </menuItem>
-                <menuItem title="Quit" keyEquivalent="q" id="LmP-mI-dDc" userLabel="Quit">
+                <menuItem isSeparatorItem="YES" id="Zv9-hp-heD"/>
+                <menuItem title="Launch at Login" keyEquivalent="l" id="tU8-jY-Cw3">
+                    <connections>
+                        <action selector="toggleLaunchOnLogin:" target="vQj-dd-GoX" id="tjq-3a-oye"/>
+                    </connections>
+                </menuItem>
+                <menuItem title="Check for Updates" keyEquivalent="u" id="zow-ql-WNV"/>
+                <menuItem isSeparatorItem="YES" id="NAb-Li-52a"/>
+                <menuItem title="Quit Soduto" keyEquivalent="q" id="LmP-mI-dDc" userLabel="Quit">
                     <connections>
                         <action selector="quit:" target="vQj-dd-GoX" id="tJd-Y3-QP5"/>
                     </connections>

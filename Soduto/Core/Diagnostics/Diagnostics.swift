@@ -165,6 +165,7 @@ final class Diagnostics: NSObject {
             ("Detailed Packet Logging", #selector(togglePacketTracing(_:))),
             ("Reconnect All Devices", #selector(reconnect(_:)))
         ] {
+            if action == #selector(reconnect(_:)) { menu.addItem(.separator()) }
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
             menu.addItem(item)

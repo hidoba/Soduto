@@ -56,6 +56,7 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
         }
         self.statusBarItem.menu = self.statusBarMenu
         self.statusBarItem.button?.imagePosition = .imageOnly
+        self.statusBarMenu.minimumWidth = 280
         updateConnectionCount()
         
         let dragTypes: [NSPasteboard.PasteboardType] = [
@@ -223,6 +224,7 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     
     func refreshDeviceLists() {
         updateConnectionCount()
+        updateDeviceImages()
         self.preferencesWindowController?.refreshDeviceLists()
         self.dashboardWindowController?.refreshDeviceList()
         self.dashboardMenuItem?.isEnabled = !(deviceDataSource?.pairedDevices.isEmpty ?? true) || !(deviceDataSource?.unavailableDevices.isEmpty ?? true)
@@ -298,7 +300,11 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
         }
         
         // Re-add device items, storing references for live image updates
-        let devices = self.deviceDataSource?.pairedDevices ?? []
+        let devices = (self.deviceDataSource?.pairedDevices ?? []).sorted {
+            if $0.isReachable != $1.isReachable { return $0.isReachable }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        self.availableDevicesItem.title = !devices.isEmpty && devices.allSatisfy(\.isReachable) ? "Connected devices" : "Devices"
         guard devices.count > 0 else { return }
         
         var index = self.statusBarMenu.index(of: self.availableDevicesItem)
@@ -307,61 +313,30 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
             let item = NSMenuItem(title: device.name, action: nil, keyEquivalent: "")
             item.tag = InterfaceElementTags.availableDeviceMenuItem.rawValue
             item.submenu = DeviceMenu(device: device)
-            item.image = statusImage(for: device)
+            updatePresentation(of: item, for: device)
             index += 1
             self.statusBarMenu.insertItem(item, at: index)
             deviceMenuItems[device.id] = item
         }
     }
     
-    /// Updates only the status images on existing device menu items without rebuilding the menu.
-    /// Called by service observers for real-time battery/connectivity changes.
-    /// Also restores the title defensively as AppKit can drop the title text when the image
-    /// is updated while the menu is mid-render (transient layout glitch).
+    /// Update the existing row without interrupting an open device submenu.
     @MainActor
     private func updateDeviceImages() {
         guard let devices = self.deviceDataSource?.pairedDevices else { return }
         for device in devices {
             guard let item = deviceMenuItems[device.id] else { continue }
-            if item.title != device.name { item.title = device.name }
-            item.image = statusImage(for: device)
+            updatePresentation(of: item, for: device)
         }
     }
     
     @MainActor
-    private func statusImage(for device: Device) -> NSImage? {
-        guard let serviceManager = self.serviceManager else { return nil }
-        
-        // Collect image fragments from all services that provide status bar images
-        let fragments: [(order: Int, image: NSImage)] = serviceManager.services
-            .compactMap { $0 as? StatusBarImageProvider }
-            .compactMap { provider in
-                guard let image = provider.statusBarImage(for: device) else { return nil }
-                return (provider.statusBarImageSortOrder, image)
-            }
-            .sorted { $0.order < $1.order }
-        
-        guard !fragments.isEmpty else { return nil }
-        
-        // Composite all fragments horizontally with spacing between them
-        let interSpacing: CGFloat = 2
-        let imageHeight: CGFloat = 13
-        let totalWidth = fragments.map(\.image.size.width).reduce(0, +) + interSpacing * CGFloat(max(fragments.count - 1, 0))
-        
-        let image = NSImage(size: CGSize(width: totalWidth, height: imageHeight), flipped: false) { _ in
-            var x: CGFloat = 0
-            for (index, fragment) in fragments.enumerated() {
-                fragment.image.draw(in: NSRect(
-                    x: x,
-                    y: (imageHeight - fragment.image.size.height) / 2,
-                    width: fragment.image.size.width,
-                    height: fragment.image.size.height
-                ))
-                x += fragment.image.size.width + (index < fragments.count - 1 ? interSpacing : 0)
-            }
-            return true
-        }
-        
-        return image
+    private func updatePresentation(of item: NSMenuItem, for device: Device) {
+        let battery = serviceManager?.service(ofType: BatteryService.self)?.statuses[device.id]
+        let networks = serviceManager?.service(ofType: ConnectivityReportService.self)?.statuses[device.id] ?? []
+        DeviceMenuPresentation.apply(to: item, name: device.name, type: device.type.rawValue,
+                                     connected: device.isReachable, battery: battery?.currentCharge,
+                                     charging: battery?.isCharging ?? false,
+                                     networks: networks.map(\.networkType))
     }
 }

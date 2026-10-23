@@ -3,7 +3,7 @@
 ## TLDR
 
 - Supports copying images and single files with compatible peers. Official GSConnect supports text clipboard only; see my [GSConnect fork](https://github.com/hidoba/gnome-shell-extension-gsconnect/tree/hidoba) for image/file clipboard work.
-- Shows the number of connected devices as a small badge over the menu bar icon, or `×` when none are connected.
+- Shows the number of connected devices as a small badge over the menu bar icon, or `×` when none are connected. Device rows include icons, connection status, and reported battery details.
 - Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8, SMS conversation browsing and sending through a paired Android phone, contact syncing, and service/interface refinements.
 - Adds diagnostic logs, **off by default**, to help report and debug problems.
 - Includes connection improvements and bugfixes for clipboard sync, pairing, sleep/wake, Wi-Fi changes, and repeated Keychain prompts.
