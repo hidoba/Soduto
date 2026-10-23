@@ -19,7 +19,8 @@ final class DiagnosticLogStoreTests: XCTestCase {
         let store = DiagnosticLogStore(directory: root)
         store.record(DiagnosticEvent(session: store.session, level: .info, event: "test.privacy", fields: [
             "content": "PRIVATE CLIPBOARD", "body": "PRIVATE MESSAGE", "filename": "PRIVATE FILE",
-            "private_key": "PRIVATE KEY", "device": "peer-1234", "reason": String(repeating: "x", count: 1000)
+            "private_key": "PRIVATE KEY", "device": "peer-1234", "reason": String(repeating: "x", count: 1000),
+            "image_file_send_supported": "false", "image_file_receive_supported": "true"
         ]))
         store.flush()
         let data = try Data(contentsOf: root.appendingPathComponent("events.jsonl"))
@@ -29,6 +30,8 @@ final class DiagnosticLogStoreTests: XCTestCase {
         let fields = value["fields"] as! [String: String]
         XCTAssertEqual(fields["device"], "peer-1234")
         XCTAssertEqual(fields["reason"]?.count, 200)
+        XCTAssertEqual(fields["image_file_send_supported"], "false")
+        XCTAssertEqual(fields["image_file_receive_supported"], "true")
     }
 
     func testRotationStaysBoundedAndRetainsNewestEvents() throws {

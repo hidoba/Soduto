@@ -20,6 +20,7 @@ struct DiagnosticEvent: Codable {
         "expensive", "constrained", "ipv4", "ipv6", "tcp_port", "pending",
         "paired", "reachable", "unavailable", "app_version", "build", "os_version",
         "architecture", "enabled", "count", "incoming", "outgoing", "service",
+        "image_file_send_supported", "image_file_receive_supported",
         "change_count", "timestamp_ms", "remote_timestamp_ms", "local_timestamp_ms",
         "result", "retry_seconds", "active_uploads", "received", "sent", "generation"
     ]
