@@ -4,10 +4,10 @@ A macOS KDE Connect client focused on clipboard sync, pairing, connection recove
 and useful diagnostics. This fork combines the upstream `fix/network-reliability`
 and `feat/refine-services` branches, with additional fixes for those connection paths.
 
-**Current release: [3.2.1 (build 33)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+**Current release: [3.2.1 (build 34)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-33-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-33-macos-universal.zip.sha256)
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-34-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-34-macos-universal.zip.sha256)
 · [Release notes](docs/releases/3.2.1.md)
 
 This is an **ad-hoc-signed, unnotarized development release** for **macOS 14 or newer**,
@@ -19,12 +19,29 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 
 ### Clipboard
 
+- **Build 34 review fixes:** cancel superseded outgoing image/file uploads on a
+  new copy, accepted remote content, peer disconnect, or disabling outgoing sharing.
+  A duplicate incoming file cancels only an upload to its sender, preserving
+  transfers to other peers. Completed uploads leave cancellation tracking.
+- Stage received files without evicting anything; publish only after checking
+  clipboard and connection freshness. Prune after a successful clipboard update,
+  checking the live selection before each removal. An obsolete background transfer
+  cannot delete an older cached file restored to the clipboard.
+- Preserve every unmarked KDE payload as its original file, including SVGs and
+  images exceeding the bitmap pixel limit. Add an optional PNG preview when it can
+  be decoded within the image limits. Require bitmap decoding only for explicitly
+  image-only payloads from this fork.
+- Include safe filename and original bytes in file duplicate detection. Receiving
+  identical pixels as `second.png` after `first.png` updates the copied filename
+  and relays the original file. Explicit bitmap generations still compare pixels.
 - **Image clipboard (build 33):** send copied macOS PNG/TIFF images as PNG and
   receive image payloads using KDE Connect's `kdeconnect.clipboard.file` protocol,
   already supported by KDE Connect **25.12.3**. Images take priority over alternate
   text representations. The existing incoming/outgoing clipboard switches apply.
-  Transfers are limited to **50 MiB** and **16,777,216 decoded pixels**. Invalid,
-  incomplete, obsolete, or disconnected transfers cannot replace a newer copy.
+  Transfers are limited to **50 MiB**. Bitmap conversion and previews are limited
+  to **16,777,216 decoded pixels**; original files can transfer without a preview.
+  Invalid explicit bitmap payloads and incomplete, obsolete or disconnected
+  transfers cannot replace a newer copy.
   Images synchronize on copy while connected; old images are not replayed on
   reconnect.
   On Linux, KDE Connect exposes received images as temporary file URLs, so paste
@@ -40,7 +57,7 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
   eviction. Clipboard direction switches and stale-transfer checks apply.
   Source files are never moved or modified. Image files within the image limits also offer a bitmap
   representation for applications that paste images rather than file URLs. Older
-  cache entries are pruned when new incoming content arrives.
+  cache entries are pruned after new incoming content is accepted.
 - Keep observing local copies while disconnected, so a new offline copy is not
   replaced by older text when a peer reconnects.
 - Check for copies between timer ticks before comparing reconnect timestamps.
@@ -160,22 +177,22 @@ locations, privacy details, and real-device test checklist.
 
 ## Validation and compatibility
 
-**104 automated checks pass**, alongside a complete Release build of the app and
+**117 automated checks pass**, alongside a complete Release build of the app and
 extensions on macOS 26:
 
 | Checks | Count | Coverage |
 | --- | ---: | --- |
 | Native reliability tests | 18 | Clipboard state, recovery policy, journal privacy, persistence, rotation, and ZIP export |
-| Clipboard integration scenarios | 47 | Text/image/file transfers, packet framing, replay/freshness, native AppKit formats, limits, cache privacy/retention, directions and relay meshes |
+| Clipboard integration scenarios | 60 | Text/image/file transfers, packet framing, replay/freshness, native AppKit formats, limits, cache privacy/retention, directions, relay meshes and all four build-33 review findings |
 | Pairing/transport integration scenarios | 17 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
 | Diagnostic settings scenarios | 6 | Default-off behavior, persistence, concurrent stop, menu placement, UI synchronization, and disabled controls |
 | Keychain/TLS regression tests | 16 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, legacy export-protected and nonexportable keys, 4096-bit identities, reconnects, denial and temporary errors |
-| **Total** | **104** | |
+| **Total** | **117** | |
 
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39935222713)
-· [Built source revision: `b5741b0`](https://github.com/hidoba/Soduto/commit/b5741b0857ee47d729ea464bcf8b007e33b6af9f)
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39940887988)
+· [Built source revision: `7fde6cf`](https://github.com/hidoba/Soduto/commit/7fde6cf8cb653452a7b7ce3c7ac304e5356bbf1d)
 
-The downloaded archive's checksum, universal executable, version **3.2.1 (33)**,
+The downloaded archive's checksum, universal executable, version **3.2.1 (34)**,
 fork bundle ID, source revision, and update settings were verified. The menu badge
 was also compiled and rendered in light and dark appearances.
 
@@ -202,11 +219,11 @@ shared connection lifecycle.
 ## Download and install
 
 1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (33)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+   [release 3.2.1 (34)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
 2. In the directory containing both downloads, verify the archive:
 
    ```sh
-   shasum -a 256 -c Soduto-3.2.1-33-macos-universal.zip.sha256
+   shasum -a 256 -c Soduto-3.2.1-34-macos-universal.zip.sha256
    ```
 
 3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
