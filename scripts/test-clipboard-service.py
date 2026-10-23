@@ -31,7 +31,7 @@ protocol BidirectionalService {
 extension BidirectionalService {
     var incomingEnabled: Bool { userDefaults.object(forKey: incomingPreferenceKey) as? Bool ?? true }
     var outgoingEnabled: Bool { userDefaults.object(forKey: outgoingPreferenceKey) as? Bool ?? true }
-    func send(_ packet: DataPacket, to device: Device) { if outgoingEnabled { device.sent.append(packet) } }
+    func send(_ packet: DataPacket, to device: Device) { if outgoingEnabled { device.send(packet) } }
 }
 public enum AppDefaultsStore { public enum Preferences { public enum Services { public enum Clipboard {
     static let incomingKey = "incoming"
@@ -40,6 +40,20 @@ public enum AppDefaultsStore { public enum Preferences { public enum Services { 
 public final class Device {
     public let id: String
     public var sent: [DataPacket] = []
+    public var cancelledUploads: Set<Int64> = []
+    private var uploadCompletions: [Int64: (Bool, Bool) -> Void] = [:]
+    public func send(_ packet: DataPacket, whenCompleted: ((Bool, Bool) -> Void)? = nil) {
+        sent.append(packet)
+        if packet.payload != nil {
+            uploadCompletions[packet.id] = whenCompleted ?? { _, _ in }
+        } else { whenCompleted?(true, false) }
+    }
+    public func cancelUpload(forPacketId id: Int64) {
+        cancelledUploads.insert(id)
+        let completion = uploadCompletions.removeValue(forKey: id)
+        completion?(false, false)
+    }
+    public func finishUpload(_ id: Int64) { uploadCompletions.removeValue(forKey: id)?(true, true) }
     public var incomingCapabilities: Set<String> = ["kdeconnect.clipboard", "kdeconnect.clipboard.connect", "kdeconnect.clipboard.file"]
     public init(_ id: String) { self.id = id }
 }
@@ -270,9 +284,11 @@ with tempfile.TemporaryDirectory(prefix="soduto-clipboard-tests-") as directory:
     combined = directory / "main.swift"
     image_tests = (root / "Tests/ClipboardImages/scenarios.swift").read_text()
     file_tests = (root / "Tests/ClipboardImages/files.swift").read_text()
+    review_tests = (root / "Tests/ClipboardImages/review-regressions.swift").read_text()
     cache = '\nlet clipboardTestDirectory = URL(fileURLWithPath: "' + str(directory / "clipboard-cache") + '")\n'
     test_extension = "extension ClipboardService { func pollForTest() { checkPasteboard() } }"
     image_extension = """extension ClipboardService {
+        func suspendImagesForTest(_ suspended: Bool) { imageQueue.isSuspended = suspended }
         func finishImagesForTest() {
             imageQueue.waitUntilAllOperationsAreFinished()
             var completed = false
@@ -282,7 +298,7 @@ with tempfile.TemporaryDirectory(prefix="soduto-clipboard-tests-") as directory:
             precondition(completed)
         }
     }"""
-    scenarios = "\nfunc textScenarios() {\n" + tests.replace(test_extension, "") + "\n}\ntextScenarios()\n" + image_tests + file_tests
+    scenarios = "\nfunc textScenarios() {\n" + tests.replace(test_extension, "") + "\n}\ntextScenarios()\n" + image_tests + file_tests + review_tests
     scenarios = scenarios.replace("ClipboardService()", "ClipboardService(clipboardFileDirectory: clipboardTestDirectory)")
     # Include actual packet framing, including zero-byte payload parsing.
     packet_source = (root / "Soduto/Core/DataPacket.swift").read_text().split("// MARK: - Identity packet")[0]

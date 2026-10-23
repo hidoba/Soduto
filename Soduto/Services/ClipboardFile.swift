@@ -65,14 +65,15 @@ final class ClipboardFileStore {
             .appendingPathComponent("com.hidoba.Soduto/Clipboard", isDirectory: true)
     }
 
-    func save(_ file: ClipboardFile, protecting urls: [URL], now: Date = Date()) -> URL? {
+    /// Staging never evicts existing files or publishes a clipboard URL. A slow
+    /// or obsolete background transfer therefore cannot delete a user's selection.
+    func stage(_ file: ClipboardFile) -> URL? {
         guard file.data.count <= ClipboardFile.maximumBytes else { return nil }
         let manager = FileManager.default
-        let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = directory.appendingPathComponent(".pending-" + UUID().uuidString, isDirectory: true)
         do {
             try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-            prune(protecting: urls, reserving: file.data.count, now: now)
             try manager.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             let destination = folder.appendingPathComponent(file.name)
             try file.data.write(to: destination, options: .atomic)
@@ -84,27 +85,55 @@ final class ClipboardFileStore {
         }
     }
 
+    /// Called on the main queue after checking clipboard/connection freshness.
+    func publish(_ staged: URL) -> URL? {
+        let folder = staged.deletingLastPathComponent()
+        guard folder.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path,
+              let id = pendingID(folder.lastPathComponent) else { return nil }
+        let destination = directory.appendingPathComponent(id.uuidString, isDirectory: true)
+        do {
+            try FileManager.default.moveItem(at: folder, to: destination)
+            return destination.appendingPathComponent(staged.lastPathComponent)
+        } catch { return nil }
+    }
+
     func discard(_ url: URL) {
         let folder = url.deletingLastPathComponent()
-        guard folder.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL,
-              UUID(uuidString: folder.lastPathComponent) != nil else { return }
+        guard folder.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path,
+              UUID(uuidString: folder.lastPathComponent) != nil || pendingID(folder.lastPathComponent) != nil else { return }
         try? FileManager.default.removeItem(at: folder)
     }
 
-    private func prune(protecting urls: [URL], reserving bytes: Int, now: Date) {
+    private func pendingID(_ name: String) -> UUID? {
+        guard name.hasPrefix(".pending-") else { return nil }
+        return UUID(uuidString: String(name.dropFirst(".pending-".count)))
+    }
+
+    /// Run after a successful clipboard commit. Re-read the live selection before
+    /// every removal instead of retaining a snapshot from background decoding.
+    func prune(protecting currentURLs: () -> [URL], now: Date = Date()) {
         let manager = FileManager.default
-        let protected = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
         let folders = (try? manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         var entries: [(URL, Date, Int)] = []
-        for folder in folders where UUID(uuidString: folder.lastPathComponent) != nil {
+        for folder in folders {
+            let pending = pendingID(folder.lastPathComponent) != nil
+            guard pending || UUID(uuidString: folder.lastPathComponent) != nil else { continue }
             guard let attributes = try? manager.attributesOfItem(atPath: folder.path),
                   attributes[.type] as? FileAttributeType == .typeDirectory else { continue }
+            let date = attributes[.creationDate] as? Date ?? .distantPast
+            if pending {
+                // Clean abandoned staging left by a crash, never active work.
+                if now.timeIntervalSince(date) > 24 * 3600 { try? manager.removeItem(at: folder) }
+                continue
+            }
             let files = (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])) ?? []
             let size = files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
-            entries.append((folder, attributes[.creationDate] as? Date ?? .distantPast, size))
+            entries.append((folder, date, size))
         }
-        var total = entries.reduce(bytes) { $0 + $1.2 }
-        for (folder, date, size) in entries.sorted(by: { $0.1 < $1.1 }) where !protected.contains(folder.standardizedFileURL) {
+        var total = entries.reduce(0) { $0 + $1.2 }
+        for (folder, date, size) in entries.sorted(by: { $0.1 < $1.1 }) {
+            let protected = Set(currentURLs().map { $0.deletingLastPathComponent().standardizedFileURL })
+            guard !protected.contains(folder.standardizedFileURL) else { continue }
             if now.timeIntervalSince(date) > 24 * 3600 || total > Self.maximumStoredBytes {
                 do { try manager.removeItem(at: folder); total -= size } catch { }
             }

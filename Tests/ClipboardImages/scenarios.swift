@@ -15,6 +15,7 @@ func fixture(_ color: NSColor, type: UTType = .png, width: Int = 8, height: Int 
 func pumpUntil(_ condition: () -> Bool) {
     let deadline = Date().addingTimeInterval(5)
     while !condition() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+    if !condition() { print("ASYNC FAILURE", Diagnostics.events.suffix(12)) }
     precondition(condition(), "Asynchronous image operation did not finish")
 }
 func streamData(_ stream: InputStream) -> Data {
@@ -31,9 +32,10 @@ func streamData(_ stream: InputStream) -> Data {
 let redPNG = fixture(.red)
 let redTIFF = fixture(.red, type: .tiff)
 let bluePNG = fixture(.blue)
-func imagePacket(_ data: Data, size: Int64? = nil, timestamp: Int64? = nil, filename: String = "image.PNG") -> (DataPacket, DownloadTask) {
+func imagePacket(_ data: Data, size: Int64? = nil, timestamp: Int64? = nil, filename: String = "image.PNG", explicitImage: Bool = true) -> (DataPacket, DownloadTask) {
     let task = DownloadTask()
     var body: DataPacket.Body = ["filename": filename as NSString]
+    if explicitImage { body["sodutoClipboardKind"] = "image" as NSString }
     if let timestamp { body["timestamp"] = NSNumber(value: timestamp); body["sodutoTimestamped"] = NSNumber(value: true) }
     var packet = DataPacket(type: "kdeconnect.clipboard.file", body: body)
     packet.payloadSize = size ?? Int64(data.count)
@@ -70,7 +72,7 @@ func imageScenarios() {
     service.cleanup(for: connecting)
     print("PASS: reconnect does not replay an image or its alternate text over a newer remote clipboard")
 
-    var (packet, task) = imagePacket(bluePNG, filename: "../../do-not-create.PNG")
+    var (packet, task) = imagePacket(bluePNG, filename: "../../do-not-create.PNG", explicitImage: false)
     _ = service.handleDataPacket(packet, fromDevice: peer, onConnection: connection)
     task.finish(bluePNG)
     pumpUntil { NSPasteboard.general.data(forType: .png).flatMap { ClipboardImage.decode($0) }?.fingerprint == ClipboardImage.decode(bluePNG)?.fingerprint }
@@ -88,13 +90,16 @@ func imageScenarios() {
     precondition(NSPasteboard.general.changeCount == beforeURLConnect && NSPasteboard.general.content == nil)
     print("PASS: KDE's temporary image URL in a reconnect packet cannot turn an image into remote path text")
 
+    // Pixel deduplication applies to explicitly identified bitmap generations.
+    NSPasteboard.general.simulateImage(bluePNG); service.pollForTest(); service.finishImagesForTest()
+    other.sent = []
     let beforeDuplicate = NSPasteboard.general.changeCount
     let endCount = completedImages()
     (packet, task) = imagePacket(fixture(.blue, type: .tiff))
     _ = service.handleDataPacket(packet, fromDevice: peer, onConnection: connection)
     task.finish(fixture(.blue, type: .tiff))
     pumpUntil { completedImages() > endCount }
-    precondition(NSPasteboard.general.changeCount == beforeDuplicate && other.sent.count == 1)
+    precondition(NSPasteboard.general.changeCount == beforeDuplicate && other.sent.isEmpty)
     print("PASS: identical pixels in different encodings neither rewrite nor echo")
 
     for size: Int64 in [0, -1, Int64(ClipboardImage.maximumBytes + 1)] {
@@ -256,7 +261,10 @@ func imageMeshScenarios() {
                 NSPasteboard.general = boards[destination]!
                 var incoming = outgoing
                 if outgoing.type == "kdeconnect.clipboard.file" {
+                    let sender = peers[source]![destination]!
+                    if sender.cancelledUploads.contains(outgoing.id) { continue }
                     let bytes = streamData(outgoing.payload!)
+                    sender.finishUpload(outgoing.id)
                     let task = DownloadTask(); incoming.downloadTask = task; incoming.payload = nil
                     _ = services[destination]!.handleDataPacket(incoming, fromDevice: peers[destination]![source]!, onConnection: Connection())
                     task.finish(bytes)

@@ -131,11 +131,18 @@ func fileScenarios() {
     print("PASS: file image previews retain file generation ordering during simultaneous image/file copies")
 
     let cache = ClipboardFileStore(directory: root.appendingPathComponent("cache-prune"))
-    let protected = cache.save(ClipboardFile(data: contents, name: "keep.txt"), protecting: [])!
-    let removable = cache.save(ClipboardFile(data: contents, name: "expire.txt"), protecting: [protected])!
+    func save(_ file: ClipboardFile, in store: ClipboardFileStore) -> URL {
+        store.publish(store.stage(file)!)!
+    }
+    let protected = save(ClipboardFile(data: contents, name: "keep.txt"), in: cache)
+    let removable = save(ClipboardFile(data: contents, name: "expire.txt"), in: cache)
+    for url in [protected, removable] {
+        try! manager.setAttributes([.creationDate: Date().addingTimeInterval(-26 * 3600)], ofItemAtPath: url.deletingLastPathComponent().path)
+    }
     let foreign = cache.directory.appendingPathComponent("not-owned-by-soduto")
     try! manager.createDirectory(at: foreign, withIntermediateDirectories: false)
-    let fresh = cache.save(ClipboardFile(data: contents, name: "new.txt"), protecting: [protected], now: Date().addingTimeInterval(25 * 3600))!
+    let fresh = save(ClipboardFile(data: contents, name: "new.txt"), in: cache)
+    cache.prune(protecting: { [protected] })
     precondition(manager.fileExists(atPath: protected.path) && !manager.fileExists(atPath: removable.path) && manager.fileExists(atPath: fresh.path))
     precondition(manager.fileExists(atPath: foreign.path))
     cache.discard(source); precondition(manager.fileExists(atPath: source.path))
@@ -144,11 +151,13 @@ func fileScenarios() {
     let quota = ClipboardFileStore(directory: root.appendingPathComponent("cache-quota"))
     var stored: [URL] = []
     for index in 0..<5 {
-        let url = quota.save(ClipboardFile(data: contents, name: "\(index).bin"), protecting: stored.first.map { [$0] } ?? [])!
+        let url = save(ClipboardFile(data: contents, name: "\(index).bin"), in: quota)
         let file = try! FileHandle(forWritingTo: url); try! file.truncate(atOffset: UInt64(ClipboardFile.maximumBytes)); try! file.close()
         stored.append(url)
+        quota.prune(protecting: { [stored[0], url] })
     }
-    _ = quota.save(ClipboardFile(data: contents, name: "trigger.txt"), protecting: [stored[0]])
+    let trigger = save(ClipboardFile(data: contents, name: "trigger.txt"), in: quota)
+    quota.prune(protecting: { [stored[0], trigger] })
     let surviving = stored.filter { manager.fileExists(atPath: $0.path) }
     precondition(surviving.count <= 3 && surviving.contains(stored[0]))
     print("PASS: the private clipboard file cache enforces its disk budget while retaining the current clipboard")
