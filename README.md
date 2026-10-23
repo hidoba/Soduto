@@ -4,12 +4,10 @@ A macOS KDE Connect client focused on clipboard sync, pairing, connection recove
 and useful diagnostics. This fork combines the upstream `fix/network-reliability`
 and `feat/refine-services` branches, with additional fixes for those connection paths.
 
-**Current release: [3.2.1 (build 32)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+**Current release: [3.2.1 (build 33)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-Build 33 adds image and single-file clipboard support and is undergoing release validation.
-
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip.sha256)
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-33-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-33-macos-universal.zip.sha256)
 · [Release notes](docs/releases/3.2.1.md)
 
 This is an **ad-hoc-signed, unnotarized development release** for **macOS 14 or newer**,
@@ -40,8 +38,9 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
   They live in a private cache (0700 directories, 0600 files), with 24-hour expiry
   and a 200 MiB budget. The file currently on the clipboard is protected from
   eviction. Clipboard direction switches and stale-transfer checks apply.
-  Source files are never moved or modified. Image files also offer a bitmap
-  representation for applications that paste images rather than file URLs.
+  Source files are never moved or modified. Image files within the image limits also offer a bitmap
+  representation for applications that paste images rather than file URLs. Older
+  cache entries are pruned when new incoming content arrives.
 - Keep observing local copies while disconnected, so a new offline copy is not
   replaced by older text when a peer reconnects.
 - Check for copies between timer ticks before comparing reconnect timestamps.
@@ -161,22 +160,22 @@ locations, privacy details, and real-device test checklist.
 
 ## Validation and compatibility
 
-**69 automated checks pass**, alongside a complete Release build of the app and
+**104 automated checks pass**, alongside a complete Release build of the app and
 extensions on macOS 26:
 
 | Checks | Count | Coverage |
 | --- | ---: | --- |
 | Native reliability tests | 18 | Clipboard state, recovery policy, journal privacy, persistence, rotation, and ZIP export |
-| Clipboard integration scenarios | 13 | Offline copies, reconnect freshness, legacy clients, direction settings, and multi-peer relays |
-| Pairing/transport integration scenarios | 16 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
+| Clipboard integration scenarios | 47 | Text/image/file transfers, packet framing, replay/freshness, native AppKit formats, limits, cache privacy/retention, directions and relay meshes |
+| Pairing/transport integration scenarios | 17 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
 | Diagnostic settings scenarios | 6 | Default-off behavior, persistence, concurrent stop, menu placement, UI synchronization, and disabled controls |
 | Keychain/TLS regression tests | 16 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, legacy export-protected and nonexportable keys, 4096-bit identities, reconnects, denial and temporary errors |
-| **Total** | **69** | |
+| **Total** | **104** | |
 
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39878359664)
-· [Built source revision: `9680142`](https://github.com/hidoba/Soduto/commit/968014280bdfb5115161cdfb54b86d0c518ba651)
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39935222713)
+· [Built source revision: `b5741b0`](https://github.com/hidoba/Soduto/commit/b5741b0857ee47d729ea464bcf8b007e33b6af9f)
 
-The downloaded archive's checksum, universal executable, version **3.2.1 (32)**,
+The downloaded archive's checksum, universal executable, version **3.2.1 (33)**,
 fork bundle ID, source revision, and update settings were verified. The menu badge
 was also compiled and rendered in light and dark appearances.
 
@@ -188,7 +187,9 @@ without export approval. No login Keychain permissions were changed.
 
 Keychain/TLS tests use real Security and NIOSSL APIs with memory-only keys,
 isolated temporary keychains and loopback sockets. The clipboard/pairing scenarios
-use fake clipboard, transport, certificate storage, and windows; diagnostic settings
+use fake transport, clipboard, certificate storage and windows. Image/file codecs,
+packet framing and temporary cache operations are real, with native AppKit checks
+on unique private pasteboards; diagnostic settings
 scenarios use isolated preferences and temporary journal files. They do not exercise
 the actual Ubuntu peer. The reported target setup is
 Ubuntu GNOME/Wayland with KDE Connect **25.12.3**. End-to-end compatibility and repeated
@@ -201,11 +202,11 @@ shared connection lifecycle.
 ## Download and install
 
 1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (32)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+   [release 3.2.1 (33)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
 2. In the directory containing both downloads, verify the archive:
 
    ```sh
-   shasum -a 256 -c Soduto-3.2.1-32-macos-universal.zip.sha256
+   shasum -a 256 -c Soduto-3.2.1-33-macos-universal.zip.sha256
    ```
 
 3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
