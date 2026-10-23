@@ -12,10 +12,10 @@ A macOS KDE Connect client focused on clipboard sync, pairing, connection recove
 and useful diagnostics. This fork combines the upstream `fix/network-reliability`
 and `feat/refine-services` branches, with additional fixes for those connection paths.
 
-**Current release: [3.2.1 (build 34)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+**Current release: [3.2.1 (build 35)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-34-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-34-macos-universal.zip.sha256)
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-35-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-35-macos-universal.zip.sha256)
 · [Release notes](docs/releases/3.2.1.md)
 
 This is an **ad-hoc-signed, unnotarized development release** for **macOS 14 or newer**,
@@ -82,6 +82,13 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 
 ### Pairing and reconnects
 
+- **Build 35 connection recovery:** preserve working sockets when macOS repeats an
+  equal network-path notification. Real path changes and explicit reconnects still
+  recover connections, and an available path can retry a failed service start.
+- Log each peer's image/file clipboard support separately for sending and receiving.
+  `no_image_capable_peer` / `no_file_capable_peer` mean no compatible peer was
+  available and the copy was not sent. GSConnect currently supports text clipboard
+  only; a successful pairing or text copy does not establish image/file support.
 - Support KDE Connect protocol versions **7 and 8**, including v8 request timestamp
   validation and certificate-based verification codes.
 - Require the peer's TLS certificate before pairing can succeed. Ignore duplicate
@@ -185,22 +192,22 @@ locations, privacy details, and real-device test checklist.
 
 ## Validation and compatibility
 
-**117 automated checks pass**, alongside a complete Release build of the app and
+**119 automated checks pass**, alongside a complete Release build of the app and
 extensions on macOS 26:
 
 | Checks | Count | Coverage |
 | --- | ---: | --- |
-| Native reliability tests | 18 | Clipboard state, recovery policy, journal privacy, persistence, rotation, and ZIP export |
+| Native reliability tests | 20 | Clipboard state, recovery policy, journal privacy, persistence, rotation, and ZIP export |
 | Clipboard integration scenarios | 60 | Text/image/file transfers, packet framing, replay/freshness, native AppKit formats, limits, cache privacy/retention, directions, relay meshes and all four build-33 review findings |
 | Pairing/transport integration scenarios | 17 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
 | Diagnostic settings scenarios | 6 | Default-off behavior, persistence, concurrent stop, menu placement, UI synchronization, and disabled controls |
 | Keychain/TLS regression tests | 16 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, legacy export-protected and nonexportable keys, 4096-bit identities, reconnects, denial and temporary errors |
-| **Total** | **117** | |
+| **Total** | **119** | |
 
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39940887988)
-· [Built source revision: `7fde6cf`](https://github.com/hidoba/Soduto/commit/7fde6cf8cb653452a7b7ce3c7ac304e5356bbf1d)
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39947540970)
+· [Built source revision: `5035fa5`](https://github.com/hidoba/Soduto/commit/5035fa5b934f8a7f47996f8b37cb818a44b7753a)
 
-The downloaded archive's checksum, universal executable, version **3.2.1 (34)**,
+The downloaded archive's checksum, universal executable, version **3.2.1 (35)**,
 fork bundle ID, source revision, and update settings were verified. The menu badge
 was also compiled and rendered in light and dark appearances.
 
@@ -233,11 +240,11 @@ shared connection lifecycle.
 ## Download and install
 
 1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (34)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+   [release 3.2.1 (35)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
 2. In the directory containing both downloads, verify the archive:
 
    ```sh
-   shasum -a 256 -c Soduto-3.2.1-34-macos-universal.zip.sha256
+   shasum -a 256 -c Soduto-3.2.1-35-macos-universal.zip.sha256
    ```
 
 3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
