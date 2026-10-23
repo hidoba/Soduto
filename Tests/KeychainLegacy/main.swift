@@ -52,6 +52,9 @@ func run() throws {
         for acl in exportACLs {
             try require(SecACLSetContents(acl, [] as CFArray, "Soduto temporary regression key" as CFString,
                                          SecKeychainPromptSelector(rawValue: 1)))
+            let authorizations = (SecACLCopyAuthorizations(acl) as? [String] ?? [])
+                .filter { $0 != kSecACLAuthorizationSign as String }
+            try require(SecACLUpdateAuthorizations(acl, authorizations as CFArray))
         }
         // Default ACL entries can cover both signing and export. Add a distinct
         // signing-only rule so export approval cannot accidentally gate signing.

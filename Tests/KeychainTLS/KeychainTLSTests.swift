@@ -60,6 +60,9 @@ private struct Fixture {
             for entry in try XCTUnwrap(SecAccessCopyMatchingACLList(acl, kSecACLAuthorizationExportClear) as? [SecACL]) {
                 XCTAssertEqual(SecACLSetContents(entry, [] as CFArray, "Synthetic export approval" as CFString,
                                                  SecKeychainPromptSelector(rawValue: 1)), errSecSuccess)
+                let authorizations = (SecACLCopyAuthorizations(entry) as? [String] ?? [])
+                    .filter { $0 != kSecACLAuthorizationSign as String }
+                XCTAssertEqual(SecACLUpdateAuthorizations(entry, authorizations as CFArray), errSecSuccess)
             }
             var signing: SecACL?
             XCTAssertEqual(SecACLCreateWithSimpleContents(acl, nil, "Synthetic signing" as CFString,

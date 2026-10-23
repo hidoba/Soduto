@@ -34,9 +34,11 @@ with tempfile.TemporaryDirectory(prefix='soduto-legacy-regression-') as temporar
                 output, _ = control.communicate(timeout=3)
                 raise RuntimeError('The old-path control did not block; UI reproduction is inconclusive: ' + output)
             except subprocess.TimeoutExpired:
-                subprocess.run(['sample', str(control.pid), '1', '1', '-file', str(build / 'old-path-sample.txt')], check=True)
-                trace = (build / 'old-path-sample.txt').read_text()
-                if 'SecCDSAKeyCopyExternalRepresentation' not in trace:
+                sample = build / 'old-path-sample.txt'
+                sample.unlink(missing_ok=True)
+                subprocess.run(['sample', str(control.pid), '1', '1', '-file', str(sample)], check=True)
+                trace = sample.read_text()
+                if f'[{control.pid}]' not in trace or 'SecCDSAKeyCopyExternalRepresentation' not in trace:
                     raise RuntimeError('Control blocked outside the legacy export path')
                 print('PASS: old high-level signing reproduced the legacy export-approval block', flush=True)
             finally:
