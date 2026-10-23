@@ -2,7 +2,7 @@
 
 ## TLDR
 
-- Supports copying images and single files.
+- Supports copying images and single files with peers that support KDE Connect’s image/file clipboard protocol (GSConnect currently supports text only).
 - Shows the number of connected devices as a badge over the menu bar icon.
 - Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8 support, SMS conversation browsing and sending messages from your Mac through a paired Android phone, contact syncing, and service/interface refinements.
 - Adds diagnostic logs (off by default).
@@ -220,6 +220,12 @@ the actual Ubuntu peer. The reported target setup is
 Ubuntu GNOME/Wayland with KDE Connect **25.12.3**. End-to-end compatibility and repeated
 sleep/Wi-Fi recovery with that setup still need real-device validation. GNOME/Wayland
 clipboard integration also depends on the Linux desktop; see the diagnostic guide.
+**GSConnect's clipboard plugin currently synchronizes text only:** it does not
+advertise or handle `kdeconnect.clipboard.file`, so image/file clipboard sync will
+not work through GSConnect. These features require a compatible peer such as
+KDE Connect with the clipboard-file capability enabled. A successful text copy or
+pairing alone does not establish image/file support.
+[GSConnect clipboard implementation](https://github.com/GSConnect/gnome-shell-extension-gsconnect/blob/main/src/service/plugins/clipboard.js).
 Protocol support is not a guarantee that every inherited service works with every
 KDE Connect client. The additional fixes here focus on clipboard, pairing, and their
 shared connection lifecycle.

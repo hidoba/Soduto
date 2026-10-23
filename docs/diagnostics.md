@@ -3,7 +3,7 @@
 This fork combines `fix/network-reliability` (`ca7db3a`) and
 `feat/refine-services` (`afcc62d`) from sannidhyaroy/Soduto. It adds recovery
 fixes and a persistent, bounded diagnostic journal. The app uses bundle ID
-`com.hidoba.Soduto` and version 3.2.1 (32). A first install pairs as a new Mac device;
+`com.hidoba.Soduto` and version 3.2.1. A first install pairs as a new Mac device;
 updates retain the existing identity and pairings.
 
 The menu bar icon has a small badge over its upper-right corner showing the number
@@ -16,8 +16,13 @@ after sleep or network recovery. Hover for the full connection count.
 1. Enable **Write diagnostic logs** in **Preferences → Diagnostics**, or in the
    **Diagnostics** menu directly above **Quit**. It is off by default, including
    when upgrading from builds that only had the packet-tracing setting.
-2. Reproduce the failure with one Mac client running. On GNOME/Wayland, use
-   GSConnect v74 or newer, with the separate KDE Connect daemon stopped.
+2. Reproduce the failure with one Mac client running and identify the Ubuntu
+   client. **GSConnect's clipboard plugin currently supports text only**, including
+   on GNOME/Wayland. Image/file clipboard tests require a peer advertising
+   `kdeconnect.clipboard.file`, such as KDE Connect 25.12.3 or newer with that
+   capability enabled. Run one Ubuntu client at a time. GNOME clipboard access
+   still depends on the client's desktop integration; switching clients alone
+   does not establish that image/file paste will work.
 3. Note the time, direction (Mac → Ubuntu or Ubuntu → Mac), and what failed:
    fresh text clipboard, file transfer, discovery, pairing, or all traffic.
 4. Select **Diagnostics → Export Diagnostic Bundle…** before choosing
@@ -100,7 +105,8 @@ Filter by `session`, then match the `connection` UUID and `device` alias:
 | Event | Meaning |
 | --- | --- |
 | `app.will_sleep` / `app.woke` | Sleep/wake boundary. Wake forces fresh connections. |
-| `network.path_changed` | Reachability, interface types, IPv4/IPv6 and cost changed. |
+| `network.path_changed` | A different network path was reported, including reachability, interfaces and address/routing configuration. |
+| `network.path_unchanged` | A duplicate equal path notification was ignored, preserving working connections (from build 35). |
 | `network.restarting` | Why listeners and existing connections are being reset. |
 | `discovery.mdns_*` | Browse/resolve/retry and advertisement failures. |
 | `discovery.udp_*` | Announcements accepted or discarded. |
@@ -143,6 +149,15 @@ has no image reconnect freshness handshake.
 KDE's reconnect text packet can contain the temporary URL of a received image;
 `image_file_url_connect` records ignoring that URL while a local image is present.
 Ordinary live text packets containing URLs remain supported.
+
+`no_image_capable_peer` and `no_file_capable_peer` mean a local copy was detected,
+but no connected peer advertises image/file clipboard reception. No payload was
+sent. Check the Ubuntu client and its advertised capabilities before debugging
+payload TLS or bitmap conversion. From build 35, `clipboard.peer_added` records
+`image_file_send_supported` and `image_file_receive_supported` booleans, and an
+exported summary includes the peer's complete capabilities. GSConnect's current
+plugin advertises only text clipboard packets:
+[upstream implementation](https://github.com/GSConnect/gnome-shell-extension-gsconnect/blob/main/src/service/plugins/clipboard.js).
 
 From build 33, `clipboard.image_receiving`, `image_sent`, `image_applied`,
 `image_ignored`, `image_cancelled`, and `image_failed` events record image decisions

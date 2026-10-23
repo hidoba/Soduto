@@ -55,6 +55,7 @@ public final class Device {
     }
     public func finishUpload(_ id: Int64) { uploadCompletions.removeValue(forKey: id)?(true, true) }
     public var incomingCapabilities: Set<String> = ["kdeconnect.clipboard", "kdeconnect.clipboard.connect", "kdeconnect.clipboard.file"]
+    public var outgoingCapabilities: Set<String> = ["kdeconnect.clipboard", "kdeconnect.clipboard.connect", "kdeconnect.clipboard.file"]
     public init(_ id: String) { self.id = id }
 }
 public final class Connection {}

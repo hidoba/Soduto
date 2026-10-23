@@ -177,7 +177,9 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
                         reason: outgoingEnabled ? "new_connection" : "outgoing_disabled")
         }
         Diagnostics.record("clipboard.peer_added", fields: ["device": Diagnostics.peer(device.id), "count": String(devices.count),
-                                                           "incoming": String(incomingEnabled), "outgoing": String(outgoingEnabled)])
+            "incoming": String(incomingEnabled), "outgoing": String(outgoingEnabled),
+            "image_file_send_supported": String(device.incomingCapabilities.contains(DataPacket.clipboardFilePacketType)),
+            "image_file_receive_supported": String(device.outgoingCapabilities.contains(DataPacket.clipboardFilePacketType))])
     }
     
     public func cleanup(for device: Device) {

@@ -10,4 +10,11 @@ enum RecoveryPolicy {
         guard let lastStart else { return 0 }
         return min(restartCooldown, max(0, restartCooldown - now.timeIntervalSince(lastStart)))
     }
+
+    /// Network.framework can repeat an equal path notification. Keep working
+    /// sockets alive, but allow another start attempt if services failed to start.
+    static func shouldHandlePathUpdate<Path: Equatable>(_ path: Path, previous: Path?,
+                                                       available: Bool, servicesRunning: Bool) -> Bool {
+        previous != path || (available && !servicesRunning)
+    }
 }

@@ -42,6 +42,7 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
     private var isStarted: Bool = false
     private var monitoringStarted = false
     private var restartWork: DispatchWorkItem?
+    private var previousNetworkPath: NWPath?
     
     /// Timestamp when network services were last started (for cooldown).
     private var lastStartTime: Date?
@@ -82,6 +83,12 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
         self.pathMonitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
                 guard let self, self.monitoringStarted else { return }
+                guard RecoveryPolicy.shouldHandlePathUpdate(path, previous: self.previousNetworkPath,
+                    available: path.status == .satisfied, servicesRunning: self.isStarted) else {
+                    Diagnostics.record("network.path_unchanged", level: .debug)
+                    return
+                }
+                self.previousNetworkPath = path
                 Diagnostics.record("network.path_changed", fields: [
                     "available": String(path.status == .satisfied),
                     "interfaces": path.availableInterfaces.map { String(describing: $0.type) }.sorted().joined(separator: ","),
