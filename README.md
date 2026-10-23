@@ -33,11 +33,11 @@ Export `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in your shell, then ru
 npm run deploy
 ```
 
-The Pages project is `soduto-hidoba`, with production branch `codex/website` and custom domain `soduto.hidoba.com`. The deployment uses Wrangler Direct Upload, including the small metadata function. Builds and checks run locally; deployment is manual. GitHub Actions is disabled. Credentials stay in your shell and are not stored in this repository.
+The Pages project is `soduto-hidoba`, with production branch `codex/website` and custom domain `soduto.hidoba.com`. The deployment uses Wrangler Direct Upload, including the small metadata function. Builds and checks run locally; deployment is manual. The website has no GitHub Actions workflow; the app branch has a separate manual-only build workflow. Credentials stay in your shell and are not stored in this repository.
 
 ## Assets and previews
 
-`public/assets/soduto.png`, `soduto.webp`, and `menu-icon.png` originate from Soduto. The Mac, Ubuntu, Windows, Android and iPhone illustrations are rendered with HTML/CSS in `public/index.html`. The diagram shows text, an image and a single file together, without format tabs. Meaningful labels remain at least 12 CSS pixels at narrow widths. Phone previews stay text-only to reflect the clients’ clipboard support. The badge PNGs use the app’s production drawing method. `native-menu.png` is an AppKit-rendered preview using `DeviceMenuPresentation` from app commit `91c2182`, with example device names. It is explicitly labeled as a source preview: the published build 35 predates that menu redesign. No Cap artwork or source code is used.
+`public/assets/soduto.png`, `soduto.webp`, and `menu-icon.png` originate from Soduto. The Mac, Ubuntu, Windows, Android and iPhone illustrations are rendered with HTML/CSS in `public/index.html`. The diagram shows text, an image and a single file together, without format tabs. Meaningful labels remain at least 12 CSS pixels at narrow widths. Phone previews stay text-only to reflect the clients’ clipboard support. The badge PNGs use the app’s production drawing method. `native-menu.png` is an AppKit-rendered preview using `DeviceMenuPresentation` from app commit `91c2182`, with example device names. It is labeled as a native preview with example devices; the same menu presentation is included in build 36. No Cap artwork or source code is used.
 
 The mobile notes distinguish receiving computer text from manually sending phone text, and link to the Android clipboard implementation and iOS limitations. SMS and notification sync are described as Android features; the page notes that inherited services are still being tested.
 
