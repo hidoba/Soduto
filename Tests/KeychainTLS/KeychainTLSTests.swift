@@ -115,6 +115,15 @@ private final class HandshakeCapture: ChannelInboundHandler {
 }
 
 final class KeychainTLSTests: XCTestCase {
+    override class func setUp() {
+        super.setUp()
+        setbuf(stdout, nil)
+        setbuf(stderr, nil)
+        // This process owns only synthetic test keys. Unexpected authorization
+        // must fail the test immediately, never wait for an unattended CI dialog.
+        XCTAssertEqual(SecKeychainSetUserInteractionAllowed(false), errSecSuccess)
+    }
+
     override func setUp() { KeychainTLSPrivateKey.resetAuthorizationFailures() }
 
     private func memoryKey(bits: Int = 2048) throws -> SecKey {
