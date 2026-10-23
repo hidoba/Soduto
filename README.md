@@ -2,15 +2,11 @@
 
 ## TLDR
 
-- Supports copying images and single files with peers that support KDE Connect’s image/file clipboard protocol (GSConnect currently supports text only).
+- Supports copying images and single files with peers that support it (GSConnect doesn't support that yet but I have a [fork](https://github.com/hidoba/gnome-shell-extension-gsconnect/tree/hidoba)).
 - Shows the number of connected devices as a badge over the menu bar icon.
-- Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8 support, SMS conversation browsing and sending messages from your Mac through a paired Android phone, contact syncing, and service/interface refinements.
-- Adds diagnostic logs (off by default).
+- Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8 support, SMS conversation browsing and sending messages from your Mac through a paired Android phone, contact syncing, and service/interface refinements. (upstream `fix/network-reliability` and `feat/refine-services` branches).
+- Adds diagnostic logs (off by default) so you can open better issues and PRs.
 - Includes connection and pairing bug fixes and improvements.
-
-A macOS KDE Connect client focused on clipboard sync, pairing, connection recovery,
-and useful diagnostics. This fork combines the upstream `fix/network-reliability`
-and `feat/refine-services` branches, with additional fixes for those connection paths.
 
 **Current release: [3.2.1 (build 35)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
@@ -19,15 +15,13 @@ and `feat/refine-services` branches, with additional fixes for those connection 
 · [Release notes](docs/releases/3.2.1.md)
 
 This is an **ad-hoc-signed, unnotarized development release** for **macOS 14 or newer**,
-with a universal **Apple Silicon (`arm64`) and Intel (`x86_64`)** executable. Automated
-checks and the full Release build pass; real-device Ubuntu clipboard, pairing,
-sleep/wake, and Wi-Fi recovery testing remains pending.
+with a universal **Apple Silicon (`arm64`) and Intel (`x86_64`)** executable.
 
 ## What changed
 
 ### Clipboard
 
-- **Build 34 review fixes:** cancel superseded outgoing image/file uploads on a
+- Cancel superseded outgoing image/file uploads on a
   new copy, accepted remote content, peer disconnect, or disabling outgoing sharing.
   A duplicate incoming file cancels only an upload to its sender, preserving
   transfers to other peers. Completed uploads leave cancellation tracking.
@@ -42,7 +36,7 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 - Include safe filename and original bytes in file duplicate detection. Receiving
   identical pixels as `second.png` after `first.png` updates the copied filename
   and relays the original file. Explicit bitmap generations still compare pixels.
-- **Image clipboard (build 33):** send copied macOS PNG/TIFF images as PNG and
+- **Image clipboard:** send copied macOS PNG/TIFF images as PNG and
   receive image payloads using KDE Connect's `kdeconnect.clipboard.file` protocol,
   already supported by KDE Connect **25.12.3**. Images take priority over alternate
   text representations. The existing incoming/outgoing clipboard switches apply.
@@ -55,7 +49,7 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
   On Linux, KDE Connect exposes received images as temporary file URLs, so paste
   behavior depends on the target application and desktop clipboard integration.
   [KDE Connect 25.12.3 implementation](https://github.com/KDE/kdeconnect-kde/blob/v25.12.3/plugins/clipboard/clipboardplugin.cpp).
-- **File clipboard (build 33):** copy one regular file in Finder and paste it on
+- **File clipboard:** copy one regular file in Finder and paste it on
   the connected computer, or copy one on KDE Connect and paste it in Finder.
   The limit is **50 MiB**, including support for empty files. Folders, symlinks
   and multiple-file selections are ignored. Uploads use an immutable snapshot;
@@ -82,7 +76,7 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 
 ### Pairing and reconnects
 
-- **Build 35 connection recovery:** preserve working sockets when macOS repeats an
+- **Connection recovery:** preserve working sockets when macOS repeats an
   equal network-path notification. Real path changes and explicit reconnects still
   recover connections, and an available path can retry a failed service start.
 - Log each peer's image/file clipboard support separately for sending and receiving.
@@ -104,9 +98,8 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 
 ### Keychain authorization
 
-Build 32 seals the **complete app bundle and nested code with ad-hoc signatures**.
-Build 31's executable had only a linker signature, and the app bundle failed
-signature verification. Packaging now verifies the complete resource seal and
+Seals the **complete app bundle and nested code with ad-hoc signatures**.
+Packaging now verifies the complete resource seal and
 both architectures before publishing. This is not Developer ID signing or
 notarization; an updated binary can still require new Keychain approval.
 
@@ -117,7 +110,7 @@ completed eight TLS handshakes with no signing, app-trust or export prompts and
 no Keychain signing failures during observation. The old `<key>` description is
 retained. This verifies that restart; future app replacements may need approval.
 
-Build 31 fixes the **“export key \<key\>”** loop that remained in build 30 for
+Fixes the **“export key \<key\>”** loop that remained in build 30 for
 legacy identities. A runtime trace showed that Apple's high-level RSA signing and
 algorithm checks internally read private-key attributes, which attempt to export
 older keys. New nonexportable keys in the previous tests concealed this behavior.
