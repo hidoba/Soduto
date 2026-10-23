@@ -77,7 +77,13 @@ python3 scripts/test-keychain-tls.py
 python3 scripts/test-keychain-legacy.py
 ```
 
-See the [packaging script](scripts/package-release.py) for release packaging, and the [diagnostics guide](docs/diagnostics.md) for real-device tests. Builds and checks run locally; GitHub Actions is disabled.
+See the [packaging script](scripts/package-release.py) for release packaging, and the [diagnostics guide](docs/diagnostics.md) for real-device tests. Builds and checks can run locally. GitHub Actions builds are manual only, so pushes and pull requests do not start duplicate jobs. To build a universal app with the full regression suite, run:
+
+```sh
+gh workflow run build.yml --repo hidoba/Soduto --ref codex/reliability-diagnostics -f runner=macos-26-intel
+```
+
+The run uploads the packaged app, its SHA-256 checksum, and separate build/test logs, including logs from failed tests.
 
 ## Upstream work and attribution
 
