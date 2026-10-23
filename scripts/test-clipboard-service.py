@@ -13,6 +13,8 @@ import Foundation
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
+import Darwin
+setbuf(stdout, nil)
 public enum Service { public typealias Id = String; public typealias Capability = String }
 public struct ServiceAction { public typealias Id = Int }
 final class UserDefaults {
@@ -42,37 +44,37 @@ public final class Device {
     public init(_ id: String) { self.id = id }
 }
 public final class Connection {}
-public struct DataPacket {
-    public typealias Body = [String: AnyObject]
-    public let type: String
-    public let body: Body
-    public var payload: InputStream?
-    public var payloadSize: Int64?
-    public var downloadTask: DownloadTask?
-    public init(type: String, body: Body) { self.type = type; self.body = body }
-}
 final class NSPasteboard {
+    enum ReadingOptionKey { case urlReadingFileURLsOnly }
     struct PasteboardType: Hashable { let value: String; static let png = Self(value: "png"); static let tiff = Self(value: "tiff") }
     static var general = NSPasteboard()
     var changeCount = 0
     var content: String? = "initial synthetic text"
     var representations: [PasteboardType: Data] = [:]
     var failWrite = false
+    var fileURLs: [URL] = []
     func availableType(from types: [PasteboardType]) -> PasteboardType? { types.first { representations[$0] != nil } }
     func data(forType type: PasteboardType) -> Data? { representations[type] }
     @discardableResult func setData(_ data: Data, forType type: PasteboardType) -> Bool {
         guard !failWrite else { return false }; representations[type] = data; changeCount += 1; return true
     }
-    func readObjects(forClasses classes: [AnyClass], options: [String: Any]?) -> [Any]? {
-        content.map { [$0 as NSString] }
+    func readObjects(forClasses classes: [AnyClass], options: [ReadingOptionKey: Any]?) -> [Any]? {
+        if classes.contains(where: { $0 == NSURL.self }) { return fileURLs.map { $0 as NSURL } }
+        return content.map { [$0 as NSString] }
     }
-    func clearContents() { content = nil; representations = [:]; changeCount += 1 }
+    func clearContents() { content = nil; representations = [:]; fileURLs = []; changeCount += 1 }
     @discardableResult func writeObjects(_ values: [NSString]) -> Bool {
         content = values.first as String?; changeCount += 1; return true
     }
-    func simulateCopy(_ value: String?) { content = value; representations = [:]; changeCount += 1 }
+    @discardableResult func writeObjects(_ values: [NSURL]) -> Bool {
+        guard !failWrite else { return false }; fileURLs = values.map { $0 as URL }; changeCount += 1; return true
+    }
+    func simulateCopy(_ value: String?) { content = value; representations = [:]; fileURLs = []; changeCount += 1 }
     func simulateImage(_ data: Data, type: PasteboardType = .png, text: String? = nil) {
-        content = text; representations = [type: data]; changeCount += 1
+        content = text; representations = [type: data]; fileURLs = []; changeCount += 1
+    }
+    func simulateFiles(_ urls: [URL]) {
+        content = nil; representations = [:]; fileURLs = urls; changeCount += 1
     }
 }
 public protocol DownloadTaskDelegate: AnyObject { func downloadTask(_ task: DownloadTask, finishedWithSuccess success: Bool) }
@@ -84,7 +86,7 @@ public final class DownloadTask {
     func cancel() { cancelled = true; stream?.close() }
     func finish(_ data: Data, success: Bool = true) {
         guard !cancelled, let stream else { return }
-        _ = data.withUnsafeBytes { stream.write($0.bindMemory(to: UInt8.self).baseAddress!, maxLength: data.count) }
+        if !data.isEmpty { _ = data.withUnsafeBytes { stream.write($0.bindMemory(to: UInt8.self).baseAddress!, maxLength: data.count) } }
         stream.close()
         delegate?.downloadTask(self, finishedWithSuccess: success)
     }
@@ -94,6 +96,9 @@ extension Timer {
     static func compatScheduledTimer(withTimeInterval interval: TimeInterval, repeats: Bool,
                                      block: @escaping (Timer) -> Void) -> Timer {
         let timer = Timer(timeInterval: interval, repeats: repeats, block: block)
+        // Each synthetic computer has its own board, selected explicitly by the
+        // scenario. Real timer ticks would poll the wrong computer's board.
+        timer.fireDate = .distantFuture
         ClipboardTestTimers.timers.append(timer)
         return timer
     }
@@ -264,15 +269,30 @@ with tempfile.TemporaryDirectory(prefix="soduto-clipboard-tests-") as directory:
     source = root / "Soduto/Services/ClipboardService.swift"
     combined = directory / "main.swift"
     image_tests = (root / "Tests/ClipboardImages/scenarios.swift").read_text()
+    file_tests = (root / "Tests/ClipboardImages/files.swift").read_text()
+    cache = '\nlet clipboardTestDirectory = URL(fileURLWithPath: "' + str(directory / "clipboard-cache") + '")\n'
     test_extension = "extension ClipboardService { func pollForTest() { checkPasteboard() } }"
-    image_extension = "extension ClipboardService { func finishImagesForTest() { imageQueue.waitUntilAllOperationsAreFinished(); RunLoop.main.run(until: Date().addingTimeInterval(0.01)) } }"
-    combined.write_text(stubs + source.read_text().replace("import Cocoa", "") + test_extension + "\n" + image_extension +
-                        "\nfunc textScenarios() {\n" + tests.replace(test_extension, "") + "\n}\ntextScenarios()\n" + image_tests)
+    image_extension = """extension ClipboardService {
+        func finishImagesForTest() {
+            imageQueue.waitUntilAllOperationsAreFinished()
+            var completed = false
+            DispatchQueue.main.async { completed = true }
+            let deadline = Date().addingTimeInterval(5)
+            while !completed && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+            precondition(completed)
+        }
+    }"""
+    scenarios = "\nfunc textScenarios() {\n" + tests.replace(test_extension, "") + "\n}\ntextScenarios()\n" + image_tests + file_tests
+    scenarios = scenarios.replace("ClipboardService()", "ClipboardService(clipboardFileDirectory: clipboardTestDirectory)")
+    # Include actual packet framing, including zero-byte payload parsing.
+    packet_source = (root / "Soduto/Core/DataPacket.swift").read_text().split("// MARK: - Identity packet")[0]
+    combined.write_text(stubs + packet_source + source.read_text().replace("import Cocoa", "") + cache + test_extension + "\n" + image_extension + scenarios)
     executable = directory / "clipboard-tests"
     subprocess.run([
         "swiftc", str(root / "Soduto/Core/Diagnostics/DiagnosticEvent.swift"),
         str(root / "Soduto/Core/Diagnostics/ClipboardSyncState.swift"),
         str(root / "Soduto/Services/ClipboardImage.swift"),
+        str(root / "Soduto/Services/ClipboardFile.swift"),
         str(combined), "-o", str(executable),
     ], check=True)
     subprocess.run([str(executable)], check=True)

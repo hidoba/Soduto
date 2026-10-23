@@ -159,6 +159,19 @@ While a generation is downloading, older marked packets cannot cancel it. A new
 local copy supersedes even an in-flight generation from a peer whose clock is
 ahead. Equal-timestamp image conflicts send a bounded correction to converge on
 the same pixel fingerprint across peers.
+
+`clipboard.file_sent`, `file_receiving`, `file_applied`, `file_ignored`,
+`file_cancelled`, and `file_failed` cover the single-file clipboard path. Files
+use the same TLS payload protocol, 50 MiB limit, 35-second deadline, and direction
+settings. Additional reasons include multiple-file selections, unreadable,
+unsupported or oversized sources, identical files, and cache write failure.
+Directory/symlink/remote-URL sources are rejected; uploads snapshot a regular file
+through a checked descriptor. Zero-byte payload sizes are preserved in packet
+framing. Received files use sanitized basenames in private UUID cache directories
+under `~/Library/Caches/com.hidoba.Soduto/Clipboard`; 24-hour expiry and a 200 MiB
+budget limit retention, while protecting the current clipboard file. Files are
+never opened automatically and source files are never deleted. This cache is
+required for file paste and is independent of diagnostic log writing.
 Superseded sockets can finish existing payload uploads but cannot apply delayed
 clipboard updates or unpair the replacement session.
 

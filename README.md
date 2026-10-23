@@ -6,7 +6,7 @@ and `feat/refine-services` branches, with additional fixes for those connection 
 
 **Current release: [3.2.1 (build 32)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-Build 33 adds image clipboard support and is undergoing release validation.
+Build 33 adds image and single-file clipboard support and is undergoing release validation.
 
 [Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip)
 · [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip.sha256)
@@ -28,10 +28,20 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
   Transfers are limited to **50 MiB** and **16,777,216 decoded pixels**. Invalid,
   incomplete, obsolete, or disconnected transfers cannot replace a newer copy.
   Images synchronize on copy while connected; old images are not replayed on
-  reconnect. This covers image content, rather than arbitrary Finder file copies.
+  reconnect.
   On Linux, KDE Connect exposes received images as temporary file URLs, so paste
   behavior depends on the target application and desktop clipboard integration.
   [KDE Connect 25.12.3 implementation](https://github.com/KDE/kdeconnect-kde/blob/v25.12.3/plugins/clipboard/clipboardplugin.cpp).
+- **File clipboard (build 33):** copy one regular file in Finder and paste it on
+  the connected computer, or copy one on KDE Connect and paste it in Finder.
+  The limit is **50 MiB**, including support for empty files. Folders, symlinks
+  and multiple-file selections are ignored. Uploads use an immutable snapshot;
+  received files retain a safe basename and are never opened automatically.
+  They live in a private cache (0700 directories, 0600 files), with 24-hour expiry
+  and a 200 MiB budget. The file currently on the clipboard is protected from
+  eviction. Clipboard direction switches and stale-transfer checks apply.
+  Source files are never moved or modified. Image files also offer a bitmap
+  representation for applications that paste images rather than file URLs.
 - Keep observing local copies while disconnected, so a new offline copy is not
   replaced by older text when a peer reconnects.
 - Check for copies between timer ticks before comparing reconnect timestamps.

@@ -13,6 +13,10 @@ struct ClipboardImage {
     let png: Data
     let fingerprint: Data
 
+    static func isImageFilename(_ name: String) -> Bool {
+        UTType(filenameExtension: URL(fileURLWithPath: name).pathExtension)?.conforms(to: .image) == true
+    }
+
     static func decode(_ data: Data) -> ClipboardImage? {
         guard !data.isEmpty, data.count <= maximumBytes,
               let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),

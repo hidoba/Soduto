@@ -50,6 +50,8 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
     private var pendingImageTimestamp: Int64?
     private var peerSessions: [String: UUID] = [:]
     private var currentImage: ClipboardImage?
+    private var currentFile: ClipboardFile?
+    private let fileStore: ClipboardFileStore
     private struct ImageDownload {
         let task: DownloadTask
         let stream: OutputStream
@@ -60,11 +62,16 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         let ordered: Bool
         let size: Int
         let timeout: Timer
+        let filename: String
+        let fileOnly: Bool
+        let imageRequired: Bool
+        var logKind: String { imageRequired ? "image" : "file" }
     }
     private var imageDownload: ImageDownload?
     
     /// Start tracking immediately, including periods without a connected peer.
-    public init() {
+    public init(clipboardFileDirectory: URL? = nil) {
+        fileStore = ClipboardFileStore(directory: clipboardFileDirectory)
         // Track local changes while disconnected too. Otherwise a reconnect sends
         // new text with an old timestamp and a stale peer can overwrite it.
         startMonitoring()
@@ -129,7 +136,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
             // KDE stores received images as temporary file URLs, and its text
             // reconnect packet can serialize that URL as `content`. It isn't a
             // newer text copy and must not turn our image into a remote temp path.
-            if pasteboardHasImage, URL(string: contents)?.isFileURL == true {
+            if pasteboardHasImage || !pasteboardFileURLs.isEmpty, URL(string: contents)?.isFileURL == true {
                 logDecision("ignored", device: device, reason: "image_file_url_connect")
                 return true
             }
@@ -161,7 +168,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         // can decide which side has the newer content
         // KDE's connect handshake has no image timestamp negotiation. Replaying an
         // old image at reconnect would overwrite a newer copy on the peer.
-        if !pasteboardHasImage,
+        if !pasteboardHasImage, pasteboardFileURLs.isEmpty,
            let items = NSPasteboard.general.readObjects(forClasses: [NSString.self], options: nil),
            let content = items.first as? String {
             send(DataPacket.clipboardConnectPacket(withContent: content, timestamp: currentTimestamp), to: device)
@@ -219,9 +226,14 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         guard syncState.observeLocalChange(NSPasteboard.general.changeCount) else { return }
         invalidateImageWork()
         currentImage = nil
+        currentFile = nil
         Diagnostics.record("clipboard.local_changed", level: .debug, fields: [
             "change_count": String(syncState.changeCount), "timestamp_ms": String(syncState.timestampMilliseconds), "count": String(devices.count)
         ])
+        if !pasteboardFileURLs.isEmpty {
+            sendLocalFile()
+            return
+        }
         if pasteboardHasImage {
             sendLocalImage()
             return
@@ -247,7 +259,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         // A relay may return through a different connection with a new packet ID.
         // Keep both checks: legacy peers omit timestamps, while a remembered
         // generation also stops two different clipboard values circling a mesh.
-        let current = pasteboardHasImage ? nil : NSPasteboard.general.readObjects(forClasses: [NSString.self], options: nil)?.first as? String
+        let current = pasteboardHasImage || !pasteboardFileURLs.isEmpty ? nil : NSPasteboard.general.readObjects(forClasses: [NSString.self], options: nil)?.first as? String
         if current == content {
             if !ordered || milliseconds >= syncState.timestampMilliseconds { invalidateImageWork() }
             replayFilter.remember(content, timestamp: milliseconds)
@@ -277,6 +289,9 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
                 if let currentImage, !replayFilter.contains(content, timestamp: milliseconds) {
                     replayFilter.remember(content, timestamp: milliseconds)
                     sendImage(currentImage, timestamp: milliseconds)
+                } else if let currentFile, !replayFilter.contains(content, timestamp: milliseconds) {
+                    replayFilter.remember(content, timestamp: milliseconds)
+                    sendFile(currentFile, timestamp: milliseconds)
                 }
                 logDecision("ignored", device: device, reason: "timestamp_tie")
                 return
@@ -288,6 +303,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         }
         invalidateImageWork()
         currentImage = nil
+        currentFile = nil
         NSPasteboard.general.clearContents()
         guard NSPasteboard.general.writeObjects([content as NSString]) else {
             Diagnostics.record("clipboard.write_failed", level: .error, fields: ["device": Diagnostics.peer(device.id)])
@@ -313,6 +329,56 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         NSPasteboard.general.availableType(from: [.png, .tiff]) != nil
     }
 
+    private var pasteboardFileURLs: [URL] {
+        (NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+
+    private func sendLocalFile() {
+        guard outgoingEnabled else {
+            Diagnostics.record("clipboard.file_ignored", fields: ["reason": "outgoing_disabled"])
+            return
+        }
+        let urls = pasteboardFileURLs
+        // KDE's wire protocol carries one filename, not a list or directory tree.
+        guard urls.count == 1, let url = urls.first else {
+            Diagnostics.record("clipboard.file_ignored", fields: ["reason": "multiple_files_unsupported"])
+            return
+        }
+        guard devices.contains(where: { $0.incomingCapabilities.contains(DataPacket.clipboardFilePacketType) }) else {
+            Diagnostics.record("clipboard.file_ignored", fields: ["reason": "no_file_capable_peer"])
+            return
+        }
+        let revision = imageRevision, count = syncState.changeCount, timestamp = currentTimestamp
+        let sessions = peerSessions
+        imageQueue.addOperation { [weak self] in
+            let file = ClipboardFile.read(url)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.imageRevision == revision, NSPasteboard.general.changeCount == count else {
+                    Diagnostics.record("clipboard.file_ignored", fields: ["reason": "obsolete_local_copy"])
+                    return
+                }
+                guard let file else {
+                    Diagnostics.record("clipboard.file_ignored", fields: ["reason": "unreadable_unsupported_or_oversized_file"])
+                    return
+                }
+                self.currentFile = file
+                self.replayFilter.rememberFile(file.fingerprint, timestamp: timestamp)
+                self.sendFile(file, timestamp: timestamp, sessions: sessions)
+            }
+        }
+    }
+
+    private func sendFile(_ file: ClipboardFile, timestamp: Int64, excluding sender: Device? = nil, sessions: [String: UUID]? = nil) {
+        guard outgoingEnabled else { return }
+        for device in devices where device.id != sender?.id && device.incomingCapabilities.contains(DataPacket.clipboardFilePacketType) {
+            if let sessions, sessions[device.id] == nil || sessions[device.id] != peerSessions[device.id] { continue }
+            send(DataPacket.clipboardFilePacket(file, timestamp: timestamp), to: device)
+            Diagnostics.record("clipboard.file_sent", fields: ["device": Diagnostics.peer(device.id), "bytes": String(file.data.count),
+                                                            "reason": sender == nil ? "local_change" : "relay"])
+        }
+    }
+
     private func pasteboardImageData() -> Data? {
         guard let type = NSPasteboard.general.availableType(from: [.png, .tiff]),
               let data = NSPasteboard.general.data(forType: type),
@@ -330,7 +396,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
             download.timeout.invalidate()
             download.task.delegate = nil
             download.task.cancel()
-            logImage("cancelled", device: download.device, reason: "clipboard_or_connection_changed")
+            logImage("cancelled", device: download.device, reason: "clipboard_or_connection_changed", kind: download.logKind)
         }
     }
 
@@ -386,9 +452,16 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
             return
         }
         guard let task = packet.downloadTask, let size = packet.payloadSize,
-              size > 0, size <= Int64(ClipboardImage.maximumBytes),
-              packet.body["filename"] is String,
+              let rawFilename = packet.body["filename"] as? String, !rawFilename.isEmpty,
+              size >= 0, size <= Int64(ClipboardFile.maximumBytes),
               devices.contains(where: { $0.id == device.id }) else {
+            logImage("ignored", device: device, reason: "invalid_payload_or_size")
+            return
+        }
+        let filename = ClipboardFile.safeName(rawFilename)
+        let fileOnly = packet.body["sodutoClipboardKind"] as? String == "file"
+        let imageRequired = packet.body["sodutoClipboardKind"] as? String == "image" || (!fileOnly && ClipboardImage.isImageFilename(filename))
+        guard size > 0 || !imageRequired else {
             logImage("ignored", device: device, reason: "invalid_payload_or_size")
             return
         }
@@ -406,7 +479,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         let stream = OutputStream.toMemory()
         let timeout = Timer.compatScheduledTimer(withTimeInterval: 35, repeats: false) { [weak self] _ in
             guard let self, self.imageDownload?.revision == revision else { return }
-            self.logImage("failed", device: device, reason: "transfer_timeout")
+            self.logImage("failed", device: device, reason: "transfer_timeout", kind: imageRequired ? "image" : "file")
             self.invalidateImageWork()
         }
         RunLoop.main.add(timeout, forMode: .common)
@@ -414,9 +487,10 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         // sizes above so the memory stream is always bounded at 50 MiB.
         imageDownload = ImageDownload(task: task, stream: stream, device: device, revision: revision,
                                       changeCount: NSPasteboard.general.changeCount, timestamp: timestamp,
-                                      ordered: ordered, size: Int(size), timeout: timeout)
+                                      ordered: ordered, size: Int(size), timeout: timeout,
+                                      filename: filename, fileOnly: fileOnly, imageRequired: imageRequired)
         task.delegate = self
-        logImage("receiving", device: device, reason: "remote_change", bytes: Int(size))
+        logImage("receiving", device: device, reason: "remote_change", bytes: Int(size), kind: imageRequired ? "image" : "file")
         task.start(withStream: stream)
     }
 
@@ -429,38 +503,57 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
               data.count == download.size else {
             pendingImageTimestamp = nil
             imageSourceDeviceID = nil
-            logImage("failed", device: download.device, reason: "incomplete_payload")
+            logImage("failed", device: download.device, reason: "incomplete_payload", kind: download.logKind)
             return
         }
         let existing = currentImage
-        let existingData = existing == nil ? pasteboardImageData() : nil
+        // A file may also offer a PNG preview. Its generation must retain the
+        // file tie order instead of masquerading as an image generation.
+        let existingData = existing == nil && currentFile == nil && pasteboardFileURLs.isEmpty ? pasteboardImageData() : nil
+        let existingFile = currentFile
+        let existingURLs = pasteboardFileURLs
+        let store = fileStore
         imageQueue.addOperation { [weak self] in
             let image = ClipboardImage.decode(data)
             let previous = existing ?? existingData.flatMap { ClipboardImage.decode($0) }
+            let previousFile = existingFile ?? existingURLs.first.flatMap { ClipboardFile.read($0) }
+            let file = ClipboardFile(data: data, name: download.filename)
+            let valid = !download.imageRequired || image != nil
+            let url = valid ? store.save(file, protecting: existingURLs) : nil
             DispatchQueue.main.async { [weak self] in
+                // A discarded/duplicate transfer must not retain an unused cache file.
+                defer {
+                    if let url, !(self?.pasteboardFileURLs.contains(url) ?? false) {
+                        DispatchQueue.global(qos: .utility).async { store.discard(url) }
+                    }
+                }
                 guard let self else { return }
                 guard self.imageRevision == download.revision,
                       NSPasteboard.general.changeCount == download.changeCount,
                       self.devices.contains(where: { $0.id == download.device.id }) else {
-                    self.logImage("ignored", device: download.device, reason: "clipboard_or_connection_changed")
+                    self.logImage("ignored", device: download.device, reason: "clipboard_or_connection_changed", kind: download.logKind)
                     return
                 }
                 self.imageSourceDeviceID = nil
                 self.pendingImageTimestamp = nil
                 guard self.incomingEnabled else {
-                    self.logImage("ignored", device: download.device, reason: "incoming_disabled")
+                    self.logImage("ignored", device: download.device, reason: "incoming_disabled", kind: download.logKind)
                     return
                 }
-                guard let image else {
+                guard valid else {
                     self.logImage("ignored", device: download.device, reason: "invalid_or_oversized_image")
                     return
                 }
-                self.applyImage(image, previous: previous, download: download)
+                if let image, !download.fileOnly {
+                    self.applyImage(image, previous: previous, file: file, url: url, download: download)
+                } else {
+                    self.applyFile(file, preview: image, previous: previousFile, url: url, download: download)
+                }
             }
         }
     }
 
-    private func applyImage(_ image: ClipboardImage, previous: ClipboardImage?, download: ImageDownload) {
+    private func applyImage(_ image: ClipboardImage, previous: ClipboardImage?, file: ClipboardFile, url: URL?, download: ImageDownload) {
         let timestamp = download.timestamp
         if previous?.fingerprint == image.fingerprint {
             replayFilter.rememberImage(image.fingerprint, timestamp: timestamp)
@@ -492,22 +585,72 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
             logImage("ignored", device: download.device, reason: "replayed_generation")
             return
         }
+        guard let url else {
+            logImage("failed", device: download.device, reason: "clipboard_cache_write_failed")
+            return
+        }
         NSPasteboard.general.clearContents()
-        guard NSPasteboard.general.setData(image.png, forType: .png) else {
+        guard NSPasteboard.general.writeObjects([url as NSURL]), NSPasteboard.general.setData(image.png, forType: .png) else {
             logImage("failed", device: download.device, reason: "pasteboard_write_failed")
             return
         }
         currentImage = image
+        currentFile = file
         syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: timestamp)
         replayFilter.rememberImage(image.fingerprint, timestamp: timestamp)
         logImage("applied", device: download.device, reason: "remote_change", bytes: image.png.count)
         sendImage(image, timestamp: timestamp, excluding: download.device)
     }
 
-    private func logImage(_ result: String, device: Device, reason: String, bytes: Int? = nil) {
+    private func applyFile(_ file: ClipboardFile, preview: ClipboardImage?, previous: ClipboardFile?, url: URL?, download: ImageDownload) {
+        let timestamp = download.timestamp
+        if previous?.fingerprint == file.fingerprint {
+            replayFilter.rememberFile(file.fingerprint, timestamp: timestamp)
+            if download.ordered && timestamp > currentTimestamp {
+                syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: timestamp)
+                sendFile(file, timestamp: timestamp, excluding: download.device)
+            }
+            currentFile = file
+            currentImage = nil
+            Diagnostics.record("clipboard.file_ignored", fields: ["device": Diagnostics.peer(download.device.id), "reason": "identical_file"])
+            return
+        }
+        if download.ordered && (timestamp < currentTimestamp || (timestamp == currentTimestamp &&
+            (currentImage != nil || (previous != nil && !previous!.fingerprint.lexicographicallyPrecedes(file.fingerprint))))) {
+            if timestamp == currentTimestamp, !replayFilter.containsFile(file.fingerprint, timestamp: timestamp) {
+                replayFilter.rememberFile(file.fingerprint, timestamp: timestamp)
+                if let currentImage { sendImage(currentImage, timestamp: timestamp) }
+                else if let previous { sendFile(previous, timestamp: timestamp) }
+            }
+            Diagnostics.record("clipboard.file_ignored", fields: ["device": Diagnostics.peer(download.device.id), "reason": "older_generation_or_tie"])
+            return
+        }
+        guard !replayFilter.containsFile(file.fingerprint, timestamp: timestamp) else {
+            Diagnostics.record("clipboard.file_ignored", fields: ["device": Diagnostics.peer(download.device.id), "reason": "replayed_generation"])
+            return
+        }
+        guard let url else {
+            Diagnostics.record("clipboard.file_failed", fields: ["device": Diagnostics.peer(download.device.id), "reason": "clipboard_cache_write_failed"])
+            return
+        }
+        NSPasteboard.general.clearContents()
+        guard NSPasteboard.general.writeObjects([url as NSURL]) else {
+            Diagnostics.record("clipboard.file_failed", fields: ["device": Diagnostics.peer(download.device.id), "reason": "pasteboard_write_failed"])
+            return
+        }
+        if let preview { NSPasteboard.general.setData(preview.png, forType: .png) }
+        currentImage = nil // File generations have their own fingerprint/tie order.
+        currentFile = file
+        syncState.recordRemoteChange(NSPasteboard.general.changeCount, timestampMilliseconds: timestamp)
+        replayFilter.rememberFile(file.fingerprint, timestamp: timestamp)
+        Diagnostics.record("clipboard.file_applied", fields: ["device": Diagnostics.peer(download.device.id), "bytes": String(file.data.count)])
+        sendFile(file, timestamp: timestamp, excluding: download.device)
+    }
+
+    private func logImage(_ result: String, device: Device, reason: String, bytes: Int? = nil, kind: String = "image") {
         var fields = ["device": Diagnostics.peer(device.id), "reason": reason, "timestamp_ms": String(currentTimestamp)]
         if let bytes { fields["bytes"] = String(bytes) }
-        Diagnostics.record("clipboard.image_\(result)", level: result == "failed" ? .warning : .info, fields: fields)
+        Diagnostics.record("clipboard.\(kind)_\(result)", level: result == "failed" ? .warning : .info, fields: fields)
     }
 
     private func logDecision(_ result: String, device: Device, reason: String) {
@@ -569,10 +712,21 @@ fileprivate extension DataPacket {
     static func clipboardImagePacket(_ png: Data, timestamp: Int64) -> DataPacket {
         var packet = DataPacket(type: clipboardFilePacketType, body: [
             "filename": "clipboard.png" as NSString,
+            "sodutoClipboardKind": "image" as NSString,
             "timestamp": NSNumber(value: timestamp), "sodutoTimestamped": NSNumber(value: true)
         ])
         packet.payload = InputStream(data: png)
         packet.payloadSize = Int64(png.count)
+        return packet
+    }
+
+    static func clipboardFilePacket(_ file: ClipboardFile, timestamp: Int64) -> DataPacket {
+        var packet = DataPacket(type: clipboardFilePacketType, body: [
+            "filename": file.name as NSString, "sodutoClipboardKind": "file" as NSString,
+            "timestamp": NSNumber(value: timestamp), "sodutoTimestamped": NSNumber(value: true)
+        ])
+        packet.payload = InputStream(data: file.data)
+        packet.payloadSize = Int64(file.data.count)
         return packet
     }
     

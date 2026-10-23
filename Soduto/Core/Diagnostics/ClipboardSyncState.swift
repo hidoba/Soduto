@@ -28,6 +28,14 @@ struct ClipboardReplayFilter {
         remember(Fingerprint(digest: Data([1]) + digest, timestamp: timestamp))
     }
 
+    func containsFile(_ digest: Data, timestamp: Int64) -> Bool {
+        recent.contains(Fingerprint(digest: Data([2]) + digest, timestamp: timestamp))
+    }
+
+    mutating func rememberFile(_ digest: Data, timestamp: Int64) {
+        remember(Fingerprint(digest: Data([2]) + digest, timestamp: timestamp))
+    }
+
     private mutating func remember(_ value: Fingerprint) {
         guard !recent.contains(value) else { return }
         recent.append(value)

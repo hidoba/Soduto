@@ -82,7 +82,7 @@ public struct DataPacket: CustomStringConvertible {
         if let payloadInfo = obj[Property.payloadInfo.rawValue] as? PayloadInfo {
             self.payloadInfo = payloadInfo
             if let payloadSize = obj[Property.payloadSize.rawValue] as? NSNumber {
-                self.payloadSize = payloadSize.int64Value > 0 ? payloadSize.int64Value : nil
+                self.payloadSize = payloadSize.int64Value >= 0 ? payloadSize.int64Value : nil
             }
         }
     }
