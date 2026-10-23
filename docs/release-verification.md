@@ -1,32 +1,46 @@
 # Verify the release
 
-Soduto 3.2.1 (build 36) was built and packaged in GitHub Actions. The published ZIP is the original workflow output, renamed without changing its contents. Its SHA-256 matches both the CI archive and the hash recorded in the packaging log.
+Starting with **Soduto 3.2.1 (37)**, GitHub Actions builds, tests, attests, and publishes the release. The release page shows **github-actions[bot]** as its publisher and links the exact source commit and workflow run. Publication waits for both the application checks and the separate Keychain/TLS job to pass.
 
-- [Source commit: `472beae`](https://github.com/hidoba/Soduto/commit/472beae289c38541c14b2f46b25a32ed3b0823a9)
-- [Build workflow at that commit](https://github.com/hidoba/Soduto/blob/472beae289c38541c14b2f46b25a32ed3b0823a9/.github/workflows/build.yml)
-- [Successful build, tests, packaging log, and artifacts](https://github.com/hidoba/Soduto/actions/runs/40003601222)
-- [Release download](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)
+The ZIP is copied directly from the signed CI package without repackaging. GitHub's signed build attestation binds its SHA-256 to the source repository, commit, and workflow. The release also includes an attested `build-info.json` and a `release-attestation.sigstore.json` bundle.
 
-## Compare the download with the CI output
+## Verify your download
 
-Download `Soduto-3.2.1-36-macos-universal.zip` from the release. With an authenticated GitHub CLI, download the original CI artifact into a new directory:
+Download the ZIP from the [latest release](https://github.com/hidoba/Soduto/releases/latest). With an up-to-date [GitHub CLI](https://cli.github.com/), run:
 
 ```sh
-gh run download 40003601222 --repo hidoba/Soduto \
-  --name soduto-build-472beae289c38541c14b2f46b25a32ed3b0823a9 \
-  --dir ci-build-36
-shasum -a 256 ci-build-36/Soduto-development.zip \
-  Soduto-3.2.1-36-macos-universal.zip
+gh attestation verify Soduto-3.2.1-37-macos-universal.zip \
+  --repo hidoba/Soduto \
+  --signer-workflow hidoba/Soduto/.github/workflows/build.yml \
+  --deny-self-hosted-runners
 ```
 
-Both files should have this SHA-256:
+The result identifies the source commit and workflow. To require a particular commit, add `--source-digest` followed by its full SHA from the release notes. Each release includes a copyable command with this value filled in.
 
-```text
-796b1d7bfdaf136ac7a4b196fc46b4459fa7fb5853684b8c2c4afa68ecd4e10f
+To verify using the attached attestation bundle, add:
+
+```sh
+--bundle release-attestation.sigstore.json
 ```
 
-You can also find this hash in the build's **Seal app bundle and package development build** step and in `packaging.log` in its build-log artifact. Compare the inner `Soduto-development.zip` file; GitHub's artifact wrapper has its own, different digest.
+The same verification command works for `build-info.json` in place of the ZIP. A simple download integrity check is also available:
 
-Artifacts, including the downloadable log bundles, are retained for 14 days; this build's artifacts expire on 6 November 2026. After expiry, the run's online packaging log remains useful while GitHub retains it, but the artifact download command will no longer work.
+```sh
+shasum -a 256 -c Soduto-3.2.1-37-macos-universal.zip.sha256
+```
 
-This comparison links the released bytes to the workflow output at the stated commit. It is not a claim that a separate rebuild will produce identical bytes. The website's latest commit date may include documentation changes made after the app was built; use the release's source commit when verifying a build.
+The attestation and checksum files stay attached to the release even after the temporary Actions artifacts expire. Verification links the released bytes to the stated source and workflow; it does not claim that an independent rebuild produces identical bytes or that the code has no bugs. This build attestation is separate from Apple Developer ID signing and notarization.
+
+The website's latest commit date can include documentation changes after the app was built. Use the release's source commit when verifying a download. Earlier build 36 has checksum-based verification only; its [original verification guide](https://github.com/hidoba/Soduto/blob/a40ecf01783fce17b2edf6d5de50564048dca637/docs/release-verification.md) remains available.
+
+## Publish a new build
+
+Increase `CURRENT_PROJECT_VERSION` in the Xcode project, commit and push, then run:
+
+```sh
+gh workflow run build.yml --repo hidoba/Soduto \
+  --ref codex/reliability-diagnostics \
+  -f runner=macos-26 -f publish_release=true
+```
+
+The workflow derives a unique tag such as `v3.2.1-37` from the built app, verifies both attestations, creates the tag at the built commit, and publishes the assets with GitHub's built-in Actions token. It fails if that tag already exists, so an older release cannot be overwritten. No personal access token or signing secret is needed. Leave **Publish release** unchecked for a build that only uploads test artifacts.

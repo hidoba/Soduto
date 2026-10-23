@@ -11,7 +11,7 @@
 **[Download Soduto 3.2.1](https://github.com/hidoba/Soduto/releases/latest)**
 · [Release notes](docs/releases/3.2.1.md)
 
-Built with **GitHub Actions**. The current release ZIP matches the workflow artifact for its source commit. [Verify the release](docs/release-verification.md).
+From build 37, releases are built and published by **GitHub Actions**, after all checks pass. A signed build attestation links each download to its source commit and workflow. [Verify the release](docs/release-verification.md).
 
 Requires **macOS 14 or newer**. The app supports **Apple Silicon and Intel** and is ad-hoc signed, without Developer ID signing or notarization.
 
@@ -77,6 +77,7 @@ python3 scripts/test-pairing-transport.py
 python3 scripts/test-diagnostics-settings.py
 python3 scripts/test-keychain-tls.py
 python3 scripts/test-keychain-legacy.py
+python3 scripts/test-release.py
 ```
 
 See the [packaging script](scripts/package-release.py) for release packaging, and the [diagnostics guide](docs/diagnostics.md) for real-device tests. Builds and checks can run locally. GitHub Actions builds are manual only, so pushes and pull requests do not start duplicate jobs. To build a universal app with the full regression suite, run:
@@ -86,6 +87,8 @@ gh workflow run build.yml --repo hidoba/Soduto --ref codex/reliability-diagnosti
 ```
 
 The run uploads the packaged app, its SHA-256 checksum, and separate build/test logs, including logs from failed tests.
+
+To publish a release automatically after the checks pass, also set `-f publish_release=true`. Bump the build number first; existing release tags cannot be replaced. The workflow publishes the ZIP, checksum, build manifest, and signed attestation. See [release verification and publishing](docs/release-verification.md).
 
 ## Upstream work and attribution
 
