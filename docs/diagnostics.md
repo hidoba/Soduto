@@ -3,7 +3,7 @@
 This fork combines `fix/network-reliability` (`ca7db3a`) and
 `feat/refine-services` (`afcc62d`) from sannidhyaroy/Soduto. It adds recovery
 fixes and a persistent, bounded diagnostic journal. The app uses bundle ID
-`com.hidoba.Soduto` and version 3.2.1 (31). A first install pairs as a new Mac device;
+`com.hidoba.Soduto` and version 3.2.1 (32). A first install pairs as a new Mac device;
 updates retain the existing identity and pairings.
 
 The menu bar icon has a small badge over its upper-right corner showing the number
@@ -67,6 +67,14 @@ upstream logging statements can contain personal information in debug builds.
 
 ## Keychain access prompts
 
+Build 32 adds complete ad-hoc app-bundle signing and a strict signature check
+before packaging. It is not Developer ID signing or notarization. Build 31's
+bundle failed signature verification despite its linker-signed executable.
+Legacy keys retain their `<key>` access description. The affected key has separate
+signing and app-trust checks; approval persistence needs an interactive restart
+check and has not yet been confirmed for that key. Automatic test success alone
+does not establish that the user's Always Allow choice will persist.
+
 Build 31 avoids the implicit private-key exports that still occurred in build 30
 for legacy identities. Apple's high-level RSA signing and algorithm-support APIs
 read private-key attributes, internally attempting export. TLS now uses only the
@@ -74,7 +82,7 @@ public certificate's metadata, encodes its signature padding and requests raw RS
 signing inside Keychain. Control and payload transfers share that path. Existing
 identities are retained. New keys display **Soduto Device Identity**. Legacy keys can retain the
 `<key>` display name; this update does not replace them or loosen their access controls.
-Because these releases lack a stable developer signature, macOS may request normal
+Because these releases lack a stable Developer ID signature, macOS may request normal
 Keychain access after an app replacement. If access is denied,
 further attempts are suspended for that identity until **Diagnostics → Reconnect
 All Devices** or an app restart. This prevents discovery/reconnect loops from
@@ -167,7 +175,7 @@ behavior, privacy, concurrent stop, persistence, menu order, UI synchronization 
 disabled actions. It does not change the actual app settings or journal.
 
 GitHub Actions also builds the entire Release app and extensions on macOS 26.
-It uploads an **unsigned** app ZIP and checksum for review; this is not a
+It uploads an **ad-hoc-signed** app ZIP and checksum for review; this is not a
 notarized release. The historical Xcode certificate tests are not run by this
 workflow because they change the user's default keychain.
 

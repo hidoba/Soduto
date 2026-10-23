@@ -6,11 +6,11 @@ and `feat/refine-services` branches, with additional fixes for those connection 
 
 **Current release: [3.2.1 (build 30)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-31-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-31-macos-universal.zip.sha256)
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip.sha256)
 · [Release notes](docs/releases/3.2.1.md)
 
-This is an **unsigned, unnotarized development release** for **macOS 14 or newer**,
+This is an **ad-hoc-signed, unnotarized development release** for **macOS 14 or newer**,
 with a universal **Apple Silicon (`arm64`) and Intel (`x86_64`)** executable. Automated
 checks and the full Release build pass; real-device Ubuntu clipboard, pairing,
 sleep/wake, and Wi-Fi recovery testing remains pending.
@@ -50,6 +50,17 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 
 ### Keychain authorization
 
+Build 32 seals the **complete app bundle and nested code with ad-hoc signatures**.
+Build 31's executable had only a linker signature, and the app bundle failed
+signature verification. Packaging now verifies the complete resource seal and
+both architectures before publishing. This is not Developer ID signing or
+notarization; an updated binary can still require new Keychain approval.
+
+The affected Mac also has separate legacy signing and app-trust permissions.
+**Whether Always Allow persists for that existing key still needs the interactive
+approval/restart check; it is not established by the automated tests.** The key's
+old `<key>` description is retained, along with its existing access controls.
+
 Build 31 fixes the **“export key \<key\>”** loop that remained in build 30 for
 legacy identities. A runtime trace showed that Apple's high-level RSA signing and
 algorithm checks internally read private-key attributes, which attempt to export
@@ -63,7 +74,7 @@ ephemeral key exchange. New identities receive the readable Keychain name
 
 Existing certificates, keys and pairings are retained. Their old Keychain display
 name can remain `<key>`; updating does not replace the identity or rewrite its
-access controls. An unsigned app replacement can still require a normal Keychain
+access controls. An app replacement can still require a normal Keychain
 access approval. If access is denied, automatic attempts are suspended
 to prevent repeated dialogs. Use **Diagnostics → Reconnect All Devices** to retry
 explicitly, or restart Soduto. Temporary Keychain errors can recover during
@@ -137,10 +148,10 @@ extensions on macOS 26:
 | Keychain/TLS regression tests | 16 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, legacy export-protected and nonexportable keys, 4096-bit identities, reconnects, denial and temporary errors |
 | **Total** | **69** | |
 
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39876264905)
-· [Built source revision: `7ac72bc`](https://github.com/hidoba/Soduto/commit/7ac72bc68c96410895e2ffa508a053b152c21850)
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39878359664)
+· [Built source revision: `9680142`](https://github.com/hidoba/Soduto/commit/968014280bdfb5115161cdfb54b86d0c518ba651)
 
-The downloaded archive's checksum, universal executable, version **3.2.1 (31)**,
+The downloaded archive's checksum, universal executable, version **3.2.1 (32)**,
 fork bundle ID, source revision, and update settings were verified. The menu badge
 was also compiled and rendered in light and dark appearances.
 
@@ -165,15 +176,15 @@ shared connection lifecycle.
 ## Download and install
 
 1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (31)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+   [release 3.2.1 (32)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
 2. In the directory containing both downloads, verify the archive:
 
    ```sh
-   shasum -a 256 -c Soduto-3.2.1-31-macos-universal.zip.sha256
+   shasum -a 256 -c Soduto-3.2.1-32-macos-universal.zip.sha256
    ```
 
 3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
-   unsigned and not notarized; macOS may block it. For a development-signed build,
+   ad-hoc signed, without Developer ID signing or notarization; macOS may block it. For a development-signed build,
    use Xcode with your own Apple Developer team as described below.
 4. Quit the running copy and other Mac KDE Connect/Soduto clients before updating
    or testing. A first install of this fork pairs as a new Mac device; updates of
@@ -221,7 +232,7 @@ only its temporary keychain. No password entry is needed. This optional control
 intentionally displays an approval dialog; the fixed signing path must finish
 without it.
 
-The [build workflow](.github/workflows/build.yml) contains the complete unsigned
+The [build workflow](.github/workflows/build.yml) contains the complete development
 Release build and packaging commands. The historical certificate tests are not
 run there because they modify the user's default keychain.
 
