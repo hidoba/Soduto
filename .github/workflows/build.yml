@@ -5,6 +5,14 @@ on:
     branches: [codex/reliability-diagnostics, nightly]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: macOS runner (Intel can avoid Apple Silicon capacity queues)
+        type: choice
+        default: macos-26
+        options:
+          - macos-26
+          - macos-26-intel
 
 permissions:
   contents: read
@@ -19,7 +27,7 @@ concurrency:
 
 jobs:
   keychain-tls:
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +38,7 @@ jobs:
       - name: Legacy export-protected key across separate processes
         run: python3 scripts/test-keychain-legacy.py
   macos:
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
