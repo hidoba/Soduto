@@ -187,6 +187,23 @@ func imageScenarios() {
     precondition(task.cancelled && NSPasteboard.general.content == "text copied during image encoding")
     print("PASS: stalled image transfers time out without clearing the clipboard")
 
+    let future = Int64(Date().addingTimeInterval(3600).timeIntervalSince1970 * 1000)
+    (packet, task) = imagePacket(redPNG, timestamp: future)
+    _ = service.handleDataPacket(packet, fromDevice: peer, onConnection: connection)
+    let (olderImage, olderTask) = imagePacket(bluePNG, timestamp: future - 1)
+    _ = service.handleDataPacket(olderImage, fromDevice: other, onConnection: connection)
+    precondition(olderTask.stream == nil && !task.cancelled)
+    let olderText = DataPacket(type: "kdeconnect.clipboard", body: ["content": "older marked text" as NSString,
+        "timestamp": NSNumber(value: future - 1), "sodutoTimestamped": NSNumber(value: true)])
+    _ = service.handleDataPacket(olderText, fromDevice: other, onConnection: connection)
+    let olderConnect = DataPacket(type: "kdeconnect.clipboard.connect", body: ["content": "older connect text" as NSString,
+        "timestamp": NSNumber(value: future - 1)])
+    _ = service.handleDataPacket(olderConnect, fromDevice: other, onConnection: connection)
+    precondition(!task.cancelled && NSPasteboard.general.content == "text copied during image encoding")
+    NSPasteboard.general.simulateCopy("intentional copy after pending future image"); service.pollForTest()
+    precondition(task.cancelled && (peer.sent.last!.body["timestamp"] as! NSNumber).int64Value > future)
+    print("PASS: pending image generations reject older packets while a deliberate local copy supersedes them")
+
     // A highly compressible source must still obey the decoded pixel limit.
     precondition(ClipboardImage.decode(fixture(.black, width: 8192, height: 2049)) == nil)
     precondition(ClipboardImage.decode(redTIFF)?.fingerprint == ClipboardImage.decode(redPNG)?.fingerprint)
@@ -274,5 +291,30 @@ func imageMeshScenarios() {
     _ = drain()
     precondition(boards.values.allSatisfy { $0.data(forType: .png).flatMap { ClipboardImage.decode($0) }?.fingerprint == redFingerprint })
     print("PASS: interleaved text/image generations converge and intentionally re-copying an image synchronizes again")
+
+    // Force overlapping transfers with the same timestamp. C cancels the winner
+    // before decoding it, then must learn the winner from A's bounded correction.
+    let future = Int64(Date().addingTimeInterval(7200).timeIntervalSince1970 * 1000)
+    let red = ClipboardImage.decode(redPNG)!, blue = ClipboardImage.decode(bluePNG)!
+    let high = red.fingerprint.lexicographicallyPrecedes(blue.fingerprint) ? bluePNG : redPNG
+    let low = high == redPNG ? bluePNG : redPNG
+    for (name, bytes) in [("A", high), ("B", low)] {
+        NSPasteboard.general = boards[name]!
+        let (packet, task) = imagePacket(bytes, timestamp: future)
+        _ = services[name]!.handleDataPacket(packet, fromDevice: peers[name]!["C"]!, onConnection: Connection())
+        task.finish(bytes); services[name]!.finishImagesForTest()
+    }
+    for values in peers.values { for peer in values.values { peer.sent = [] } }
+    NSPasteboard.general = boards["C"]!
+    let (highPacket, highTask) = imagePacket(high, timestamp: future)
+    let (lowPacket, lowTask) = imagePacket(low, timestamp: future)
+    _ = services["C"]!.handleDataPacket(highPacket, fromDevice: peers["C"]!["A"]!, onConnection: Connection())
+    _ = services["C"]!.handleDataPacket(lowPacket, fromDevice: peers["C"]!["B"]!, onConnection: Connection())
+    precondition(highTask.cancelled)
+    lowTask.finish(low); services["C"]!.finishImagesForTest()
+    precondition(drain() <= 8)
+    let highFingerprint = ClipboardImage.decode(high)!.fingerprint
+    precondition(boards.values.allSatisfy { $0.data(forType: .png).flatMap { ClipboardImage.decode($0) }?.fingerprint == highFingerprint })
+    print("PASS: equal-timestamp images that overlap in flight converge through bounded winner corrections")
 }
 imageMeshScenarios()

@@ -47,6 +47,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
     }()
     private var imageRevision = UUID()
     private var imageSourceDeviceID: String?
+    private var pendingImageTimestamp: Int64?
     private var peerSessions: [String: UUID] = [:]
     private var currentImage: ClipboardImage?
     private struct ImageDownload {
@@ -109,7 +110,11 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
             }
             let reportedTimestamp = try? dataPacket.getTimestamp()
             let ordered = dataPacket.hasOrderedClipboardTimestamp && (reportedTimestamp ?? 0) > 0
-            let senderTimestamp = ordered ? reportedTimestamp! : syncState.timestampForNextChange()
+            let senderTimestamp = ordered ? reportedTimestamp! : nextClipboardTimestamp
+            if ordered, let pendingImageTimestamp, senderTimestamp <= pendingImageTimestamp {
+                logDecision("ignored", device: device, reason: "newer_image_pending")
+                return true
+            }
             applyExternalClipboard(contents, from: device, timestamp: senderTimestamp, ordered: ordered)
             return true
         case DataPacket.clipboardConnectPacketType:
@@ -129,7 +134,8 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
                 return true
             }
             let remoteMilliseconds = (try? dataPacket.getTimestamp()) ?? 0
-            if syncState.shouldAcceptConnect(timestampMilliseconds: remoteMilliseconds) {
+            if syncState.shouldAcceptConnect(timestampMilliseconds: remoteMilliseconds),
+               remoteMilliseconds > (pendingImageTimestamp ?? 0) {
                 applyExternalClipboard(contents, from: device, timestamp: remoteMilliseconds)
             } else {
                 Diagnostics.record("clipboard.connect_ignored", fields: [
@@ -197,8 +203,19 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
     }
     
     private var currentTimestamp: Int64 { syncState.timestampMilliseconds }
+
+    private var nextClipboardTimestamp: Int64 {
+        let pending = pendingImageTimestamp ?? 0
+        return max(syncState.timestampForNextChange(), pending < Int64.max ? pending + 1 : pending)
+    }
     
     private func checkPasteboard() {
+        if NSPasteboard.general.changeCount != syncState.changeCount,
+           let pendingImageTimestamp, pendingImageTimestamp > currentTimestamp {
+            // A deliberate copy must supersede a generation still downloading,
+            // including a marked peer whose clock is ahead of this Mac.
+            syncState.recordRemoteChange(syncState.changeCount, timestampMilliseconds: pendingImageTimestamp)
+        }
         guard syncState.observeLocalChange(NSPasteboard.general.changeCount) else { return }
         invalidateImageWork()
         currentImage = nil
@@ -257,6 +274,10 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
             }
             if milliseconds == syncState.timestampMilliseconds,
                current == nil || !current!.utf8.lexicographicallyPrecedes(content.utf8) {
+                if let currentImage, !replayFilter.contains(content, timestamp: milliseconds) {
+                    replayFilter.remember(content, timestamp: milliseconds)
+                    sendImage(currentImage, timestamp: milliseconds)
+                }
                 logDecision("ignored", device: device, reason: "timestamp_tie")
                 return
             }
@@ -302,6 +323,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
     private func invalidateImageWork() {
         imageRevision = UUID()
         imageSourceDeviceID = nil
+        pendingImageTimestamp = nil
         imageQueue.cancelAllOperations()
         if let download = imageDownload {
             imageDownload = nil
@@ -372,13 +394,14 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         }
         let reported = (try? packet.getTimestamp()) ?? 0
         let ordered = packet.hasOrderedClipboardTimestamp && reported > 0
-        let timestamp = ordered ? reported : syncState.timestampForNextChange()
-        guard !ordered || timestamp >= currentTimestamp else {
+        let timestamp = ordered ? reported : nextClipboardTimestamp
+        guard !ordered || timestamp >= max(currentTimestamp, pendingImageTimestamp ?? 0) else {
             logImage("ignored", device: device, reason: "older_generation")
             return
         }
         invalidateImageWork()
         imageSourceDeviceID = device.id
+        pendingImageTimestamp = timestamp
         let revision = imageRevision
         let stream = OutputStream.toMemory()
         let timeout = Timer.compatScheduledTimer(withTimeInterval: 35, repeats: false) { [weak self] _ in
@@ -404,6 +427,8 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         task.delegate = nil
         guard success, let data = download.stream.property(forKey: .dataWrittenToMemoryStreamKey) as? Data,
               data.count == download.size else {
+            pendingImageTimestamp = nil
+            imageSourceDeviceID = nil
             logImage("failed", device: download.device, reason: "incomplete_payload")
             return
         }
@@ -421,6 +446,7 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
                     return
                 }
                 self.imageSourceDeviceID = nil
+                self.pendingImageTimestamp = nil
                 guard self.incomingEnabled else {
                     self.logImage("ignored", device: download.device, reason: "incoming_disabled")
                     return
@@ -450,6 +476,15 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
         // ties consistently, matching the text service's deterministic ordering.
         if download.ordered && (timestamp < currentTimestamp ||
             (timestamp == currentTimestamp && previous != nil && !previous!.fingerprint.lexicographicallyPrecedes(image.fingerprint))) {
+            // If two images overlapped in flight, the losing hub may never have
+            // seen our winner. Correct that peer once per losing generation;
+            // remembering the loser prevents correction packets echoing forever.
+            if timestamp == currentTimestamp, let previous,
+               !replayFilter.containsImage(image.fingerprint, timestamp: timestamp) {
+                replayFilter.rememberImage(image.fingerprint, timestamp: timestamp)
+                currentImage = previous
+                sendImage(previous, timestamp: timestamp)
+            }
             logImage("ignored", device: download.device, reason: "older_generation_or_tie")
             return
         }

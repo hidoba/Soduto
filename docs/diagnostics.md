@@ -155,6 +155,10 @@ use `kdeconnect.clipboard.file` and the existing authenticated TLS payload trans
 The limits are 50 MiB encoded and 16,777,216 pixels decoded, with a 35-second
 transfer deadline. Copies and disconnects cancel pending downloads; decoding runs
 off the main thread and checks freshness again before touching the pasteboard.
+While a generation is downloading, older marked packets cannot cancel it. A new
+local copy supersedes even an in-flight generation from a peer whose clock is
+ahead. Equal-timestamp image conflicts send a bounded correction to converge on
+the same pixel fingerprint across peers.
 Superseded sockets can finish existing payload uploads but cannot apply delayed
 clipboard updates or unpair the replacement session.
 
