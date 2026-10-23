@@ -83,8 +83,10 @@ public class ConnectionProvider: NSObject, ConnectionDelegate {
         self.pathMonitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
                 guard let self, self.monitoringStarted else { return }
+                // isStarted also covers a failed bind; retry if a listener died.
+                let servicesRunning = self.isStarted && self.udpChannel?.isActive == true && self.tcpServerChannel?.isActive == true
                 guard RecoveryPolicy.shouldHandlePathUpdate(path, previous: self.previousNetworkPath,
-                    available: path.status == .satisfied, servicesRunning: self.isStarted) else {
+                    available: path.status == .satisfied, servicesRunning: servicesRunning) else {
                     Diagnostics.record("network.path_unchanged", level: .debug)
                     return
                 }
