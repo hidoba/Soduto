@@ -15,13 +15,18 @@ function updateProject(data) {
     if (typeof url === 'string' && url.startsWith('https://github.com/hidoba/Soduto/releases/download/') && url.endsWith('.zip')) {
       document.querySelectorAll('[data-download]').forEach(link => { link.href = url; });
     }
+    const build = document.querySelector('[data-build-link]');
+    if (build) {
+      build.textContent = data.release.publishedByActions === true ? 'Built & published by GitHub Actions' : 'Built with GitHub Actions';
+      build.href = /^https:\/\/github\.com\/hidoba\/Soduto\/actions\/runs\/\d+$/.test(data.release.buildUrl) ? data.release.buildUrl : 'https://github.com/hidoba/Soduto/actions/workflows/build.yml';
+    }
   }
 }
 // A build-time snapshot keeps the date and links available without JavaScript or GitHub.
 // The edge endpoint refreshes app-branch metadata independently of website deploys.
 (async () => {
   try {
-    const response = await fetch('/api/project', { signal: AbortSignal.timeout(7000) });
+    const response = await fetch('/api/project?v=2', { signal: AbortSignal.timeout(7000) });
     if (!response.ok) throw new Error('Project metadata unavailable');
     updateProject(await response.json());
   } catch {

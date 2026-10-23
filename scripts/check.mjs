@@ -18,17 +18,35 @@ assert(!Number.isNaN(Date.parse(snapshot.commit.date)));
 assert(html.includes(snapshot.commit.sha));
 // Check the live date's data path without depending on the network in tests.
 const fakeSha = 'a'.repeat(40);
+const fakeRelease = {
+  tag_name:'v3.2.1-37', author:{login:'github-actions[bot]'},
+  body:'[Build](https://github.com/hidoba/Soduto/actions/runs/123)',
+  assets:[
+    {name:'Soduto-3.2.1-37-macos-universal.zip',browser_download_url:'https://github.com/hidoba/Soduto/releases/download/v3.2.1-37/Soduto-3.2.1-37-macos-universal.zip'},
+    {name:'release-attestation.sigstore.json',browser_download_url:'https://github.com/hidoba/Soduto/releases/download/v3.2.1-37/release-attestation.sigstore.json'},
+  ],
+};
 let requested = [];
 const fakeFetch = async url => {
   requested.push(url);
-  return Response.json(url.endsWith('/releases/latest') ? {
-    tag_name:'v3.2.1', assets:[{name:'Soduto-3.2.1-35-macos-universal.zip',browser_download_url:'https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-35-macos-universal.zip'}]
-  } : {sha:fakeSha,commit:{committer:{date:'2026-10-23T12:00:00Z'}}});
+  return Response.json(url.endsWith('/releases/latest') ? fakeRelease : {sha:fakeSha,commit:{committer:{date:'2026-10-23T12:00:00Z'}}});
 };
 const result = await projectMetadata({fetcher:fakeFetch});
 assert(requested.some(url=>url.endsWith('/commits/codex%2Freliability-diagnostics')));
 assert.equal(result.commit.sha, fakeSha);
 assert(result.release.download.endsWith('.zip'));
+assert.equal(result.release.buildUrl, 'https://github.com/hidoba/Soduto/actions/runs/123');
+assert.equal(result.release.publishedByActions, true);
+for (const change of [
+  {author:{login:'hidoba'}},
+  {assets:[fakeRelease.assets[0]]},
+  {assets:[{...fakeRelease.assets[0],browser_download_url:'https://example.invalid/file.zip'},fakeRelease.assets[1]]},
+  {body:'https://github.com/another/repository/actions/runs/123'},
+  {body:'https://github.com/hidoba/Soduto/actions/runs/123.invalid'},
+]) {
+  const data = await projectMetadata({fetcher:async url=>Response.json(url.endsWith('/releases/latest') ? {...fakeRelease,...change} : {sha:fakeSha,commit:{committer:{date:'2026-10-23T12:00:00Z'}}})});
+  assert.equal(data.release.publishedByActions, false);
+}
 await assert.rejects(projectMetadata({fetcher:async()=>new Response('',{status:503})}));
 await assert.rejects(projectMetadata({fetcher:async url=>Response.json(url.endsWith('/releases/latest')?{tag_name:'v3.2.1'}:{sha:'invalid',commit:{committer:{date:'invalid'}}})}));
 console.log('Checks passed: local assets, anchors, unique IDs, unified clipboard illustration and mobile directions, app commit snapshot, GitHub metadata validation and failure handling.');

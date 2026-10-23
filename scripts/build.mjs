@@ -18,6 +18,9 @@ let html = await readFile('public/index.html', 'utf8');
 html = html.replace(/(<time data-commit-date datetime=")[^"]*(">)[^<]*(<\/time>)/, `$1${date.toISOString()}$2${formatted}$3`);
 html = html.replace(/(<a class="commit-line" data-commit-link href=")[^"]*(")/, `$1https://github.com/hidoba/Soduto/commit/${data.commit.sha}$2`);
 html = html.replace(/(<span data-version>)[^<]*(<\/span>)/, `$1${data.release.tag}$2`);
+const buildUrl = /^https:\/\/github\.com\/hidoba\/Soduto\/actions\/runs\/\d+$/.test(data.release.buildUrl) ? data.release.buildUrl : 'https://github.com/hidoba/Soduto/actions/workflows/build.yml';
+const buildLabel = data.release.publishedByActions === true ? 'Built &amp; published by GitHub Actions' : 'Built with GitHub Actions';
+html = html.replace(/(<a data-build-link href=")[^"]*(">)[^<]*(<\/a>)/, `$1${buildUrl}$2${buildLabel}$3`);
 if (data.release.download.startsWith('https://github.com/hidoba/Soduto/releases/download/')) {
   html = html.replaceAll(/(data-download href=")[^"]*(")/g, `$1${data.release.download}$2`);
 }

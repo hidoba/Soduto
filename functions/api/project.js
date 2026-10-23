@@ -2,6 +2,8 @@ import { projectMetadata } from '../../lib/project.js';
 
 export async function onRequestGet(context) {
   const url = new URL('/api/project', context.request.url);
+  // Keep old cached responses without publication metadata out of this schema.
+  url.searchParams.set('v', '2');
   const key = new Request(url.toString());
   const cache = caches.default;
   const cached = await cache.match(key);
