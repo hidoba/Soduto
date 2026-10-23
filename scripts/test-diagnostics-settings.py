@@ -41,6 +41,28 @@ status = (root / "Soduto/UI/Controllers/StatusBarMenuController.swift").read_tex
 start = status.index("    func installDiagnosticsMenu(")
 end = status.index("    func refreshDeviceLists()", start)
 stubs += status[start:end] + "}\n"
+# Deliberately keep this caller nonisolated, as it is with the macOS 26 SDK.
+# Compiling the actual entry point catches actor errors hidden by UI-only stubs.
+refresh_start = status.index("    func refreshDeviceLists()")
+refresh_end = status.index("    /// Call this once", refresh_start)
+stubs += r'''
+@MainActor final class RefreshWindowProbe {
+    var count = 0
+    func refreshDeviceLists() { precondition(Thread.isMainThread); count += 1 }
+    func refreshDeviceList() { precondition(Thread.isMainThread); count += 1 }
+}
+struct RefreshDeviceSource { let pairedDevices = [1]; let unavailableDevices: [Int] = [] }
+final class MenuRefreshBoundary {
+    @MainActor var connectionRefreshes = 0
+    @MainActor var imageRefreshes = 0
+    var preferencesWindowController: RefreshWindowProbe?
+    var dashboardWindowController: RefreshWindowProbe?
+    var dashboardMenuItem: NSMenuItem?
+    var deviceDataSource: RefreshDeviceSource? = RefreshDeviceSource()
+    @MainActor func updateConnectionCount() { precondition(Thread.isMainThread); connectionRefreshes += 1 }
+    @MainActor func updateDeviceImages() { precondition(Thread.isMainThread); imageRefreshes += 1 }
+'''
+stubs += status[refresh_start:refresh_end] + "}\n"
 checks = r'''
 MainActor.assumeIsolated {
     let app = NSApplication.shared
@@ -153,6 +175,23 @@ MainActor.assumeIsolated {
                                  connected: true, battery: 150, charging: false, networks: ["5G\nInjected"])
     precondition(!deviceRow.toolTip!.contains("150%") && !deviceRow.toolTip!.contains("\n"))
     print("PASS: live battery/network updates preserve native rows and offline state removes stale service details")
+
+    let refresh = MenuRefreshBoundary()
+    refresh.preferencesWindowController = RefreshWindowProbe()
+    refresh.dashboardWindowController = RefreshWindowProbe()
+    refresh.dashboardMenuItem = NSMenuItem()
+    refresh.refreshDeviceLists()
+    precondition(refresh.connectionRefreshes == 1 && refresh.imageRefreshes == 1)
+    precondition(refresh.preferencesWindowController!.count == 1 && refresh.dashboardWindowController!.count == 1)
+    precondition(refresh.dashboardMenuItem!.isEnabled)
+    DispatchQueue.global().async { refresh.refreshDeviceLists() }
+    let refreshDeadline = Date().addingTimeInterval(5)
+    while refresh.imageRefreshes < 2 && Date() < refreshDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+    }
+    precondition(refresh.connectionRefreshes == 2 && refresh.imageRefreshes == 2)
+    precondition(refresh.preferencesWindowController!.count == 2 && refresh.dashboardWindowController!.count == 2)
+    print("PASS: device-list refresh is synchronous on main and moves background callbacks onto the main actor")
 
     let relaunchFolder = temporary.appendingPathComponent("relaunch", isDirectory: true)
     var first: Diagnostics? = Diagnostics(userDefaults: preferences, directory: relaunchFolder)

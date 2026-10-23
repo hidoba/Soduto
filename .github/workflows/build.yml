@@ -7,7 +7,7 @@ on:
       runner:
         description: macOS runner (Intel avoids Apple Silicon capacity queues)
         type: choice
-        default: macos-26-intel
+        default: macos-26
         options:
           - macos-26-intel
           - macos-26

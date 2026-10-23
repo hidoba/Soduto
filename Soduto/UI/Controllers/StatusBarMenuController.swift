@@ -223,11 +223,21 @@ public class StatusBarMenuController: NSObject, NSWindowDelegate, NSMenuDelegate
     }
     
     func refreshDeviceLists() {
-        updateConnectionCount()
-        updateDeviceImages()
-        self.preferencesWindowController?.refreshDeviceLists()
-        self.dashboardWindowController?.refreshDeviceList()
-        self.dashboardMenuItem?.isEnabled = !(deviceDataSource?.pairedDevices.isEmpty ?? true) || !(deviceDataSource?.unavailableDevices.isEmpty ?? true)
+        let refresh: @MainActor () -> Void = { [weak self] in
+            guard let self else { return }
+            self.updateConnectionCount()
+            self.updateDeviceImages()
+            self.preferencesWindowController?.refreshDeviceLists()
+            self.dashboardWindowController?.refreshDeviceList()
+            self.dashboardMenuItem?.isEnabled = !(self.deviceDataSource?.pairedDevices.isEmpty ?? true) || !(self.deviceDataSource?.unavailableDevices.isEmpty ?? true)
+        }
+        // Device callbacks have no actor annotation in older SDKs. Keep main
+        // callbacks synchronous and marshal other callers before touching UI.
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { refresh() }
+        } else {
+            DispatchQueue.main.async { refresh() }
+        }
     }
     
     /// Call this once from AppDelegate after all services have been registered.
