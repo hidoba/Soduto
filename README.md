@@ -15,7 +15,7 @@ npm run check
 npm run dev
 ```
 
-Open `http://localhost:8788`. The site uses HTML, CSS and JavaScript, with no frontend framework. The app previews are original HTML/CSS illustrations, not captures of a real user's devices. The app icons come from Soduto and retain its GPL v3 license.
+Open `http://localhost:8788`. The site uses HTML, CSS and JavaScript, with no frontend framework. The device and clipboard previews are original HTML/CSS illustrations with example content, not captures of a real user's devices. The app icons come from Soduto and retain its GPL v3 license.
 
 ## Latest app commit and download
 
@@ -33,10 +33,10 @@ Export `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in your shell, then ru
 npm run deploy
 ```
 
-The Pages project is `soduto-hidoba`, with production branch `codex/website` and custom domain `soduto.hidoba.com`. The deployment uses Wrangler Direct Upload, including the small metadata function. The workflow in `.github/workflows/website.yml` checks builds on website changes; deployment is manual. Credentials stay in your shell and are not stored in this repository.
+The Pages project is `soduto-hidoba`, with production branch `codex/website` and custom domain `soduto.hidoba.com`. The deployment uses Wrangler Direct Upload, including the small metadata function. Builds and checks run locally; deployment is manual. GitHub Actions is disabled. Credentials stay in your shell and are not stored in this repository.
 
 ## Assets and previews
 
-`public/assets/soduto.png`, `soduto.webp`, and `menu-icon.png` originate from Soduto. The app menu, clipboard and diagnostics previews are rendered with HTML/CSS in `public/index.html`; the example names and content are illustrative. No Cap artwork or source code is used.
+`public/assets/soduto.png`, `soduto.webp`, and `menu-icon.png` originate from Soduto. The Mac, Ubuntu, Windows, Android and iPhone illustrations are rendered with HTML/CSS in `public/index.html`. The Text/Images/Files controls change the example desktop clipboard. Phone previews stay text-only to reflect the clients’ clipboard support. No Cap artwork or source code is used.
 
 Licensed under [GNU GPL v3](LICENSE). Thanks to [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto) and [soduto/Soduto](https://github.com/soduto/Soduto).
