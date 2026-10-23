@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://soduto.hidoba.com/sitemap.xml
