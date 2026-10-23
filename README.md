@@ -11,6 +11,8 @@
 **[Download Soduto 3.2.1](https://github.com/hidoba/Soduto/releases/latest)**
 · [Release notes](docs/releases/3.2.1.md)
 
+Built with **GitHub Actions**. The current release ZIP matches the workflow artifact for its source commit. [Verify the release](docs/release-verification.md).
+
 Requires **macOS 14 or newer**. The app supports **Apple Silicon and Intel** and is ad-hoc signed, without Developer ID signing or notarization.
 
 ## Clipboard
