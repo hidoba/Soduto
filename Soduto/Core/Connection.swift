@@ -30,6 +30,11 @@ public protocol ConnectionDelegate: AnyObject {
     func connection(_ connection: Connection, didSendPacket packet: DataPacket, uploadedPayload: Bool)
     func connection(_ connection: Connection, didReadPacket packet: DataPacket)
     func connectionCapacityChanged(_ connection: Connection)
+    func connection(_ connection: Connection, uploadPayloadProgress bytesSent: Int64, totalBytes: Int64?, forPacket packet: DataPacket)
+}
+
+public extension ConnectionDelegate {
+    func connection(_ connection: Connection, uploadPayloadProgress bytesSent: Int64, totalBytes: Int64?, forPacket packet: DataPacket) {}
 }
 
 // MARK: - Connection
@@ -79,15 +84,46 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     
     public weak var delegate: ConnectionDelegate?
     public weak var pairingDelegate: ConnectionPairingDelegate?
+    public let diagnosticID = UUID().uuidString.lowercased()
+    private let diagnosticStartedAt = Date()
+    private var initializationTimeout: DispatchWorkItem?
+    private var diagnosticPhase = "tcp_connect"
+
+    var diagnosticFields: [String: String] {
+        ["connection": diagnosticID, "device": Diagnostics.peer(try? identity?.getDeviceId()),
+         "state": String(describing: state), "phase": diagnosticPhase, "protocol": String(peerProtocolVersion)]
+    }
+
+    func recordDiagnostic(_ event: String, level: DiagnosticEvent.Level = .info, error: Error? = nil) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.recordDiagnostic(event, level: level, error: error) }
+            return
+        }
+        var fields = diagnosticFields
+        if let error { fields.merge(Diagnostics.errorFields(error)) { _, new in new } }
+        fields["elapsed_ms"] = String(Int(Date().timeIntervalSince(diagnosticStartedAt) * 1000))
+        Diagnostics.record(event, level: level, fields: fields)
+    }
     
     public private(set) var state: State {
         didSet {
             if oldValue != self.state {
-                // Notify delegate on main queue
-                DispatchQueue.main.async { [weak self] in
+                if state == .Open { diagnosticPhase = "open" }
+                if state != .Initializing { initializationTimeout?.cancel(); initializationTimeout = nil }
+                let newState = state
+                var fields = diagnosticFields
+                fields["previous_state"] = String(describing: oldValue)
+                Diagnostics.record("connection.state_changed", fields: fields)
+                let notify = { [weak self] in
                     guard let self = self else { return }
-                    self.delegate?.connection(self, didSwitchToState: self.state)
+                    // The socket can close before an enqueued Open notification
+                    // runs. Never hand an already-closed connection to a device.
+                    if newState == .Open && self.state != .Open { return }
+                    self.delegate?.connection(self, didSwitchToState: newState)
                 }
+                // Hand off Open before handling the next already-queued packet.
+                // Otherwise its initial clipboard/pair packet goes to the provider.
+                if Thread.isMainThread { notify() } else { DispatchQueue.main.async(execute: notify) }
             }
             
             if self.state == .Open && self.pairingStatus == .Paired {
@@ -142,6 +178,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     
     /// If true, connection will close after all pending uploads complete.
     private var shouldCloseAfterUploads: Bool = false
+    private var isRetiring = false
     
     // MARK: Initialization / Deinitialization
     
@@ -173,6 +210,8 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         }
         
         // Connect to peer
+        startInitializationTimeout()
+        recordDiagnostic("connection.outgoing_created")
         self.connectToAddress(address)
     }
     
@@ -206,6 +245,9 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         self.uploadQueue = Connection.createDispatchQueue(withLabel: "Payload upload queue")
         self.downloadQueue = Connection.createDispatchQueue(withLabel: "Payload download queue")
         super.init()
+        diagnosticPhase = "pre_tls_identity"
+        startInitializationTimeout()
+        recordDiagnostic("connection.incoming_created")
         
         // Set up the channel pipeline
         self.setupChannelPipeline(channel: channel).whenFailure { [weak self] error in
@@ -215,9 +257,9 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     deinit {
+        initializationTimeout?.cancel()
         self.notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
         self.notificationObservers.removeAll()
-        self.state = .Closed
         self.channel?.close(promise: nil)
     }
     
@@ -229,6 +271,10 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         }
         
         try packet.validateIdentityType()
+        let protocolVersion = try packet.getProtocolVersion()
+        guard (7...DataPacket.protocolVersion).contains(protocolVersion) else {
+            throw DataPacket.IdentityError.invalidProtocolVersion
+        }
         let deviceId = try packet.getDeviceId()
         let deviceConfig = self.config.deviceConfig(for: deviceId)
         
@@ -237,14 +283,14 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         self.pairingHandler!.delegate = self
         self.pairingHandler!.timeoutHandler = { [weak self] in
             guard let self = self else { return }
-            DispatchQueue.main.async {
-                self.pairingDelegate?.connection(self, pairingFailed: DefaultPairingHandler.Error.timedOut)
-                self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
-            }
+            guard self.state == .Open else { return }
+            self.recordDiagnostic("pairing.timed_out", level: .warning)
+            self.pairingDelegate?.connection(self, pairingFailed: DefaultPairingHandler.Error.timedOut)
+            self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
         }
         
-        // Store peer's protocol version (default to 7 for backwards compatibility)
-        self.peerProtocolVersion = (try? packet.getProtocolVersion()) ?? 7
+        // Every supported connection must authenticate with TLS.
+        self.peerProtocolVersion = protocolVersion
         
         // Pass protocol version to pairing handler so it can generate correct verification codes
         self.pairingHandler!.setPeerProtocolVersion(self.peerProtocolVersion)
@@ -350,10 +396,26 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     public func close() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { self.close() }
+            return
+        }
+        let wasPending = pairingHandler?.pairingStatus == .Requested || pairingHandler?.pairingStatus == .RequestedByPeer
+        pairingHandler?.cancelPendingPairing()
+        if wasPending {
+            recordDiagnostic("pairing.interrupted", level: .warning)
+            pairingDelegate?.connection(self, pairingFailed: DefaultPairingHandler.Error.connectionClosed)
+        }
+        // A timeout can fire before TCP has produced a channel. Mark closed now
+        // so pending connection ownership is released in that case too.
+        self.state = .Closed
         self.channel?.close(promise: nil)
     }
     
     public func closeAfterWriting() {
+        // A replacement owns the device now. The old socket may finish uploads,
+        // but must not apply delayed clipboard/unpair packets to the new session.
+        isRetiring = true
         if self.hasActiveUploadTasks {
             // Don't close yet - set flag to close after uploads complete
             Logger.network.debug("Connection: deferring close until uploads complete")
@@ -398,6 +460,15 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         return activeTasks
     }
     
+    /// Cancels the upload task for the given packet ID, if it is still in flight.
+    /// Calling this triggers `uploadTask(_:finishedWithSuccess:false)` on the delegate.
+    public func cancelUpload(forPacketId packetId: Int64) {
+        packetsSendingLock.lock()
+        let task = packetsSending.first(where: { $0.dataPacket.id == packetId })?.uploadTask
+        packetsSendingLock.unlock()
+        task?.cancel()
+    }
+    
     /// Helper function to validate peer certificate.
     public func shouldTrustPeerCertificate(_ peerCertificate: SecCertificate) -> Bool {
         assert(self.identity != nil, "Identity expected to be known before securing connection")
@@ -437,6 +508,15 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         }
     }
     
+    public func uploadTask(_ task: UploadTask, bytesSent: Int64, totalBytes: Int64?) {
+        self.packetsSendingLock.lock()
+        let packetInfo = self.packetsSending.first { $0.uploadTask === task }
+        self.packetsSendingLock.unlock()
+        
+        guard let packetInfo = packetInfo else { return }
+        self.delegate?.connection(self, uploadPayloadProgress: bytesSent, totalBytes: totalBytes, forPacket: packetInfo.dataPacket)
+    }
+    
     
     // MARK: Pairable
     
@@ -450,7 +530,6 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     public func requestPairing() {
         guard self.state == .Open, let handler = self.pairingHandler else {
             Logger.network.error("requestPairing called but connection not open or pairingHandler not set")
-            assertionFailure("Connection expected to be open with pairingHandler set")
             return
         }
         let previousStatus = handler.pairingStatus
@@ -459,66 +538,54 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         // Notify delegate about pairing status change
         let newStatus = handler.pairingStatus
         if newStatus != previousStatus {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.pairingDelegate?.connection(self, pairingStatusChanged: newStatus)
-            }
+            self.pairingDelegate?.connection(self, pairingStatusChanged: newStatus)
         }
     }
     
     public func acceptPairing() {
         guard self.state == .Open, let handler = self.pairingHandler else {
             Logger.network.error("acceptPairing called but connection not open or pairingHandler not set")
-            assertionFailure("Connection expected to be open with pairingHandler set")
             return
         }
+        guard handler.pairingStatus == .RequestedByPeer else { return }
         handler.acceptPairing()
         
         // Notify delegate about pairing status change
         // (DefaultPairingHandler.pairingDelegate is nil for Connection, so we handle it here)
         if handler.pairingStatus == .Paired {
             self.rememberHwAddress()
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.pairingDelegate?.connection(self, pairingStatusChanged: .Paired)
-            }
+            self.pairingDelegate?.connection(self, pairingStatusChanged: .Paired)
+        } else {
+            recordDiagnostic("pairing.accept_failed", level: .error)
+            pairingDelegate?.connection(self, pairingFailed: DefaultPairingHandler.Error.certificateUnavailable)
         }
     }
     
     public func declinePairing() {
         guard self.state == .Open, let handler = self.pairingHandler else {
             Logger.network.error("declinePairing called but connection not open or pairingHandler not set")
-            assertionFailure("Connection expected to be open with pairingHandler set")
             return
         }
         handler.declinePairing()
         
         // Notify delegate about pairing status change
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
-        }
+        self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
     }
     
     public func unpair() {
         guard self.state == .Open, let handler = self.pairingHandler else {
             Logger.network.error("unpair called but connection not open or pairingHandler not set")
-            assertionFailure("Connection expected to be open with pairingHandler set")
             return
         }
         handler.unpair()
         
         // Notify delegate about pairing status change
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
-        }
+        self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
     }
     
     public func updatePairingStatus(globalStatus: PairingStatus) {
         guard self.state == .Open, let handler = self.pairingHandler else {
             Logger.network.error("updatePairingStatus called but connection not open or pairingHandler not set")
-            assertionFailure("Connection expected to be open with pairingHandler set")
             return
         }
         handler.updatePairingStatus(globalStatus: globalStatus)
@@ -578,13 +645,43 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         bootstrap.connect(to: targetAddress).whenComplete { [weak self] result in
             switch result {
             case .success(let channel):
-                self?.channel = channel
-                Logger.network.debug("Connection connected to \(String(describing: channel.remoteAddress), privacy: .public)")
+                // ConnectionProvider creates us on the main queue and attaches
+                // its delegate immediately after init. Drive the first identity
+                // from TCP completion, after that attachment, never from init.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.state == .Initializing else { channel.close(promise: nil); return }
+                    self.channel = channel
+                    self.diagnosticPhase = "pre_tls_identity"
+                    self.recordDiagnostic("connection.tcp_connected")
+                    self.sendInitialIdentity()
+                }
             case .failure(let error):
                 Logger.network.error("Connection failed to connect: \(error, privacy: .public)")
-                self?.state = .Closed
+                DispatchQueue.main.async { [weak self] in
+                    self?.recordDiagnostic("connection.tcp_failed", level: .error, error: error)
+                    self?.close()
+                }
             }
         }
+    }
+
+    private func sendInitialIdentity() {
+        var properties: DataPacket.Body = [:]
+        if peerProtocolVersion >= 8, let deviceID = try? identity?.getDeviceId() {
+            properties[DataPacket.IdentityProperty.targetDeviceId.rawValue] = deviceID as AnyObject
+            properties[DataPacket.IdentityProperty.targetProtocolVersion.rawValue] = NSNumber(value: peerProtocolVersion)
+        }
+        _ = send(DataPacket.identityPacket(additionalProperties: properties, config: config))
+    }
+
+    private func startInitializationTimeout() {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.state == .Initializing else { return }
+            self.recordDiagnostic("connection.handshake_timeout", level: .error)
+            self.close()
+        }
+        initializationTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + RecoveryPolicy.handshakeTimeout, execute: work)
     }
     
     @discardableResult
@@ -608,6 +705,8 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     // MARK: Private - TLS
     
     private func performTLSUpgrade(role: TLSRole) {
+        diagnosticPhase = "tls"
+        recordDiagnostic("connection.tls_started")
         guard let channel = self.channel else {
             Logger.network.error("Cannot upgrade to TLS: no channel")
             return
@@ -634,7 +733,10 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                 Logger.network.debug("TLS handler added to pipeline as \(String(describing: role), privacy: .public), waiting for handshake...")
             } catch {
                 Logger.network.error("Failed to add/create TLS handler: \(error, privacy: .public)")
-                self.state = .Closed
+                DispatchQueue.main.async {
+                    self.recordDiagnostic("connection.tls_failed", level: .error, error: error)
+                    self.close()
+                }
                 channel.close(promise: nil)
             }
         }
@@ -660,56 +762,28 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     private func createTLSConfiguration(role: TLSRole) throws -> TLSConfiguration {
-        // Extract certificate and private key from SecIdentity
-        var certificate: SecCertificate?
-        let certStatus = SecIdentityCopyCertificate(hostIdentity, &certificate)
-        guard certStatus == errSecSuccess, let cert = certificate else {
-            throw NIOSSLError.failedToLoadCertificate
-        }
-        
-        var privateKey: SecKey?
-        let keyStatus = SecIdentityCopyPrivateKey(hostIdentity, &privateKey)
-        guard keyStatus == errSecSuccess, let key = privateKey else {
-            throw NIOSSLError.failedToLoadPrivateKey
-        }
-        
-        // Convert to NIOSSLCertificate and NIOSSLPrivateKey
-        let certData = SecCertificateCopyData(cert) as Data
-        let sslCert = try NIOSSLCertificate(bytes: Array(certData), format: .der)
-        
-        var error: Unmanaged<CFError>?
-        guard let keyData = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
-            throw NIOSSLError.failedToLoadPrivateKey
-        }
-        
-        let sslKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .der)
-        
-        var config: TLSConfiguration
-        switch role {
-        case .server:
-            config = TLSConfiguration.makeServerConfiguration(
-                certificateChain: [.certificate(sslCert)],
-                privateKey: .privateKey(sslKey)
-            )
-            config.certificateVerification = .noHostnameVerification
-        case .client:
-            config = TLSConfiguration.makeClientConfiguration()
-            config.certificateChain = [.certificate(sslCert)]
-            config.privateKey = .privateKey(sslKey)
-            config.certificateVerification = .noHostnameVerification
-        }
-        
-        config.minimumTLSVersion = .tlsv12
-        return config
+        try KeychainTLSIdentity.configuration(for: hostIdentity, server: role == .server)
     }
     
     // MARK: Private - Packet Handling
     
     fileprivate func handleReceivedData(_ data: Data) {
+        // Preserve wire order with TLS/close notifications and UI pairing actions.
+        // Service and pairing state must never be mutated on NIO's event loop.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.state != .Closed else { return }
+            self.handleReceivedPacket(data)
+        }
+    }
+
+    private func handleReceivedPacket(_ data: Data) {
         guard var mutablePacket = DataPacket(data: data) else {
+            recordDiagnostic("packet.decode_failed", level: .warning)
             Logger.network.error("Could not deserialize received data packet")
             return
         }
+        Diagnostics.packet("received", type: mutablePacket.type, id: mutablePacket.id, bytes: data.count,
+                           connection: diagnosticID, device: Diagnostics.peer(try? identity?.getDeviceId()))
         
         if mutablePacket.payloadInfo != nil {
             // Create DownloadTask for packets with payload
@@ -752,11 +826,12 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     private func handle(packet: DataPacket) {
-#if DEBUG
-        Logger.network.debug("handle(packet: <\(packet, privacy: .public)>) [\(self, privacy: .public)]")
-#else
-        Logger.network.debug("handle(packet type: \(packet.type, privacy: .public), id: \(packet.id, privacy: .public)) [\(self, privacy: .public)]")
-#endif
+        guard state != .Closed, !isRetiring else { return }
+        #if DEBUG
+            Logger.network.debug("handle(packet: <\(packet, privacy: .public)>) [\(self, privacy: .public)]")
+        #else
+            Logger.network.debug("handle(packet type: \(packet.type, privacy: .public), id: \(packet.id, privacy: .public)) [\(self, privacy: .public)]")
+        #endif
         
         // For protocol v8: intercept the peer's post-TLS identity packet.
         // After TLS, v8 connections stay in .Initializing until this arrives.
@@ -774,7 +849,11 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                 self.close()
                 return
             }
-            let postTLSProtocolVersion = (try? packet.getProtocolVersion()) ?? self.peerProtocolVersion
+            guard let postTLSProtocolVersion = try? packet.getProtocolVersion() else {
+                recordDiagnostic("connection.invalid_post_tls_identity", level: .error)
+                close()
+                return
+            }
             if postTLSProtocolVersion != self.peerProtocolVersion {
                 Logger.network.error("v8 post-TLS protocolVersion mismatch: pre-TLS=\(self.peerProtocolVersion) post-TLS=\(postTLSProtocolVersion) — aborting connection")
                 self.waitingForV8PostTLSIdentity = false
@@ -795,10 +874,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         // During initialization, pass all packets to delegate (e.g., identity packet)
         // The delegate (ConnectionProvider) will call applyIdentity() and finish initialization
         if self.state == .Initializing {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.delegate?.connection(self, didReadPacket: packet)
-            }
+            self.delegate?.connection(self, didReadPacket: packet)
             return
         }
         
@@ -825,17 +901,14 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         }
         
         // Pass to delegate for external handling
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.delegate?.connection(self, didReadPacket: packet)
-        }
+        self.delegate?.connection(self, didReadPacket: packet)
     }
     
     /// Handles pairing packets directly without using ConnectionDataPacketHandler.
     ///
     /// This replaces DefaultPairingHandler.handleDataPacket for Connection.
     private func handlePairingPacket(_ packet: DataPacket) {
-        guard let pairingHandler = self.pairingHandler else { return }
+        guard !isRetiring, let pairingHandler = self.pairingHandler else { return }
         
         do {
             let pairFlag = try packet.getPairFlag()
@@ -852,15 +925,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                     } else {
                         requestTimestamp = nil
                     }
-                    pairingHandler.setPairingTimestamp(requestTimestamp)
-                    
-                    // Peer initiates pairing - notify delegate with PairingRequest
-                    pairingHandler.setStatus(.RequestedByPeer)
-                    let request = PairingRequest(connection: self)
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.pairingDelegate?.connection(self, receivedPairingRequest: request)
-                    }
+                    beginPairingRequest(timestamp: requestTimestamp)
                     
                 case .Requested:
                     // Peer accepted our request - store certificate and set paired
@@ -873,17 +938,25 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                     pairingHandler.setStatus(.Paired)
                     if pairingHandler.pairingStatus != .Paired {
                         _ = self.send(DataPacket.unpairPacket())
+                        self.pairingDelegate?.connection(self, pairingFailed: DefaultPairingHandler.Error.certificateUnavailable)
+                        self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
                     } else {
                         self.rememberHwAddress()
-                        DispatchQueue.main.async { [weak self] in
-                            guard let self = self else { return }
-                            self.pairingDelegate?.connection(self, pairingStatusChanged: .Paired)
-                        }
+                        self.pairingDelegate?.connection(self, pairingStatusChanged: .Paired)
                     }
                     
                 case .Paired:
-                    // Already paired - confirm to peer
-                    self.acceptPairing()
+                    if peerProtocolVersion >= 8, packet.body[DataPacket.PairingProperty.timestamp.rawValue] != nil {
+                        // KDE distinguishes re-pair requests (with a timestamp)
+                        // from duplicate accepts (without one). Validate before
+                        // clearing the existing pin, then ask the user again.
+                        let timestamp = try packet.getPairingTimestamp()
+                        pairingHandler.setStatus(.Unpaired)
+                        pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
+                        beginPairingRequest(timestamp: timestamp)
+                    } else {
+                        recordDiagnostic("pairing.duplicate_ignored")
+                    }
                     
                 case .RequestedByPeer:
                     // Already waiting for response
@@ -892,37 +965,48 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
             } else {
                 // Peer declined or unpaired
                 if pairingHandler.pairingStatus == .Requested {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.pairingDelegate?.connection(self, pairingFailed: DefaultPairingHandler.Error.declinedByPeer)
-                    }
+                    self.pairingDelegate?.connection(self, pairingFailed: DefaultPairingHandler.Error.declinedByPeer)
                 }
                 pairingHandler.setStatus(.Unpaired)
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
-                }
+                self.pairingDelegate?.connection(self, pairingStatusChanged: .Unpaired)
             }
         } catch {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.pairingDelegate?.connection(self, pairingFailed: error)
-            }
+            recordDiagnostic("pairing.invalid_packet", level: .warning, error: error)
+            self.pairingDelegate?.connection(self, pairingFailed: error)
         }
+    }
+
+    private func beginPairingRequest(timestamp: Int64?) {
+        guard let pairingHandler else { return }
+        pairingHandler.setPairingTimestamp(timestamp)
+        pairingHandler.setStatus(.RequestedByPeer)
+        recordDiagnostic("pairing.request_received")
+        pairingDelegate?.connection(self, receivedPairingRequest: PairingRequest(connection: self))
     }
     
     fileprivate func handleTLSEstablished() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.state == .Initializing else { return }
+            self.completeTLSHandshake()
+        }
+    }
+
+    private func completeTLSHandshake() {
+        diagnosticPhase = "post_tls_identity"
+        recordDiagnostic("connection.tls_established")
         Logger.network.debug("TLS handshake completed for \(self, privacy: .public)")
         self.waitingToSecure = false
         
         // Extract and store peer certificate for pairing
-        if let trustHandler = self.trustHandler,
-           let peerCert = trustHandler.peerCertificates.first {
-            self.peerCertificate = SSLCertificateUtils.createSecCertificate(from: peerCert)
-            
-            // Generate protocol v8 pair verification code now that we have both certificates
-            self.pairingHandler?.updateVerificationCode()
+        guard let trustHandler = self.trustHandler,
+              let peerCert = trustHandler.peerCertificates.first,
+              let certificate = SSLCertificateUtils.createSecCertificate(from: peerCert) else {
+            recordDiagnostic("connection.peer_certificate_missing", level: .error)
+            close()
+            return
         }
+        self.peerCertificate = certificate
+        self.pairingHandler?.updateVerificationCode()
         
         // Perform post-handshake certificate validation for paired devices
         // Note: We do NOT send unsolicited pair packets - TLS certificate validation is sufficient
@@ -932,6 +1016,7 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                let savedCertificate = self.config.deviceConfig(for: deviceId).certificate {
                 let validator = PostHandshakeValidator(expectedCertificate: savedCertificate)
                 if !validator.validate(peerCertificates: trustHandler.peerCertificates) {
+                    recordDiagnostic("connection.certificate_rejected", level: .error)
                     Logger.network.error("Post-handshake certificate validation failed - closing connection")
                     self.close()
                     return
@@ -957,8 +1042,9 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     }
     
     fileprivate func handleChannelInactive() {
-        self.state = .Closed
-        _ = self.discardUnsentPackets(silently: true)
+        DispatchQueue.main.async { [weak self] in self?.close() }
+        // Device reclaims unsent packets from the Closed callback. Discarding
+        // them here first loses clipboard updates and their completion handlers.
     }
     
     fileprivate func handleWriteComplete(tag: Int) {
@@ -985,15 +1071,16 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     
     private func sendSimplePacket(_ packet: DataPacket, whenCompleted: SendingCompletionHandler? = nil) -> Bool {
         guard let channel = self.channel else {
+            recordDiagnostic("packet.send_without_channel", level: .warning)
             self.finalizeSending(packet: packet, completionHandler: whenCompleted, packetSent: false, payloadSent: false)
             return true
         }
         
-#if DEBUG
-        Logger.network.debug("send(:\(String(describing: packet), privacy: .public) whenCompleted:\(String(describing: whenCompleted), privacy: .public)) [\(String(describing: self), privacy: .public)]")
-#else
-        Logger.network.debug("send(type: \(packet.type, privacy: .public), id: \(packet.id, privacy: .public)) [\(String(describing: self), privacy: .public)]")
-#endif
+        #if DEBUG
+            Logger.network.debug("send(:\(String(describing: packet), privacy: .public) whenCompleted:\(String(describing: whenCompleted), privacy: .public)) [\(String(describing: self), privacy: .public)]")
+        #else
+            Logger.network.debug("send(type: \(packet.type, privacy: .public), id: \(packet.id, privacy: .public)) [\(String(describing: self), privacy: .public)]")
+        #endif
         
         guard let bytes = try? packet.serialize() else {
             Logger.network.error("Failed to serialize packet type: \(packet.type, privacy: .public)")
@@ -1002,6 +1089,8 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         }
         
         let data = Data(bytes)
+        Diagnostics.packet("sending", type: packet.type, id: packet.id, bytes: data.count,
+                           connection: diagnosticID, device: Diagnostics.peer(try? identity?.getDeviceId()))
         let info = DataPacketSendingInfo(dataPacket: packet, uploadTask: nil, completionHandler: whenCompleted)
         self.packetsSendingLock.lock()
         self.packetsSending.append(info)
@@ -1014,6 +1103,10 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                 self?.handleWriteComplete(tag: Int(packet.id))
             case .failure(let error):
                 Logger.network.error("Failed to write packet: \(error, privacy: .public)")
+                self?.recordDiagnostic("packet.write_failed", level: .error, error: error)
+                // Force the normal teardown path to reclaim queued sends; a
+                // failed write must not leave a reachable-looking connection.
+                self?.close()
             }
         }
         
@@ -1062,6 +1155,8 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         }
         
         let data = Data(bytes)
+        Diagnostics.packet("sending", type: payloadPacket.type, id: payloadPacket.id, bytes: data.count,
+                           connection: diagnosticID, device: Diagnostics.peer(try? identity?.getDeviceId()))
         let info = DataPacketSendingInfo(dataPacket: payloadPacket, uploadTask: uploadTask, completionHandler: whenCompleted)
         self.packetsSendingLock.lock()
         self.packetsSending.append(info)
@@ -1075,7 +1170,9 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
                 self?.handleWriteComplete(tag: Int(payloadPacket.id))
             case .failure(let error):
                 Logger.network.error("Failed to write payload packet: \(error, privacy: .public)")
+                self?.recordDiagnostic("payload.write_failed", level: .error, error: error)
                 uploadTask.close()
+                self?.close()
             }
         }
         
@@ -1084,6 +1181,13 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
     
     private func finalizeSending(packet: DataPacket, completionHandler: SendingCompletionHandler?, packetSent: Bool, payloadSent: Bool) {
         DispatchQueue.main.async { [weak self] in
+            if let self, !packetSent || packet.hasPayload() {
+                var fields = self.diagnosticFields
+                fields["packet_type"] = packet.type
+                fields["packet_id"] = String(packet.id)
+                fields["result"] = packet.hasPayload() ? String(packetSent && payloadSent) : String(packetSent)
+                Diagnostics.record("packet.send_completed", level: packetSent ? .info : .warning, fields: fields)
+            }
             completionHandler?(packetSent, payloadSent)
             if packetSent, let self = self {
                 self.delegate?.connection(self, didSendPacket: packet, uploadedPayload: payloadSent)
@@ -1091,7 +1195,9 @@ public class Connection: NSObject, PairingHandlerDelegate, UploadTaskDelegate {
         }
     }
     
-    private func sendKeepAlivePacket() {
+    /// Sends a keepalive packet.
+    public func sendKeepAlivePacket() {
+        guard !isRetiring else { return }
         let packet = DataPacket(type: "soduto.keepalive", body: [:])
         _ = send(packet)
     }
@@ -1184,6 +1290,7 @@ private final class ConnectionHandler: ChannelInboundHandler {
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         Logger.network.error("Connection error: \(error, privacy: .public)")
+        connection?.recordDiagnostic("connection.channel_error", level: .error, error: error)
         context.close(promise: nil)
     }
 }

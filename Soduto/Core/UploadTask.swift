@@ -17,6 +17,11 @@ import os
 /// Delegate protocol for UploadTask events.
 public protocol UploadTaskDelegate: AnyObject {
     func uploadTask(_ task: UploadTask, finishedWithSuccess success: Bool)
+    func uploadTask(_ task: UploadTask, bytesSent: Int64, totalBytes: Int64?)
+}
+
+public extension UploadTaskDelegate {
+    func uploadTask(_ task: UploadTask, bytesSent: Int64, totalBytes: Int64?) {}
 }
 
 /// Upload task for serving file payloads over TLS.
@@ -133,6 +138,13 @@ public class UploadTask {
     }
     
     // MARK: Public Methods
+    
+    /// Cancels the upload, firing the delegate with `finishedWithSuccess: false`.
+    /// Safe to call at any stage — before Android connects (awaiting) or mid-transfer.
+    public func cancel() {
+        guard !isClosed else { return }
+        self.uploadFinished(success: false)
+    }
     
     public func close() {
         guard !isClosed else { return }
@@ -275,42 +287,7 @@ public class UploadTask {
     }
     
     private func createTLSConfiguration() throws -> TLSConfiguration {
-        // Extract certificate and private key from SecIdentity
-        var certificate: SecCertificate?
-        let certStatus = SecIdentityCopyCertificate(hostIdentity, &certificate)
-        guard certStatus == errSecSuccess, let cert = certificate else {
-            throw UploadTaskError.failedToLoadCertificate
-        }
-        
-        var privateKey: SecKey?
-        let keyStatus = SecIdentityCopyPrivateKey(hostIdentity, &privateKey)
-        guard keyStatus == errSecSuccess, let key = privateKey else {
-            throw UploadTaskError.failedToLoadPrivateKey
-        }
-        
-        // Convert to NIOSSLCertificate and NIOSSLPrivateKey
-        let certData = SecCertificateCopyData(cert) as Data
-        let sslCert = try NIOSSLCertificate(bytes: Array(certData), format: .der)
-        
-        var error: Unmanaged<CFError>?
-        guard let keyData = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
-            throw UploadTaskError.failedToLoadPrivateKey
-        }
-        
-        let sslKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .der)
-        
-        var config = TLSConfiguration.makeServerConfiguration(
-            certificateChain: [.certificate(sslCert)],
-            privateKey: .privateKey(sslKey)
-        )
-        
-        // For mutual TLS with self-signed certificates:
-        // - Request client certificate (.noHostnameVerification triggers SSL_VERIFY_PEER)
-        // - Use custom verification callback for trust decisions
-        config.certificateVerification = .noHostnameVerification
-        config.minimumTLSVersion = .tlsv12
-        
-        return config
+        try KeychainTLSIdentity.configuration(for: hostIdentity, server: true)
     }
     
     // MARK: Private - Data Transfer
@@ -357,6 +334,13 @@ public class UploadTask {
         
         self.bytesSent += Int64(read)
         
+        let sent = self.bytesSent
+        let total = self.payloadSize
+        self.delegateQueue.async { [weak self] in
+            guard let self else { return }
+            self.delegate?.uploadTask(self, bytesSent: sent, totalBytes: total)
+        }
+        
         context.writeAndFlush(NIOAny(buffer)).whenComplete { [weak self] result in
             switch result {
             case .success:
@@ -377,12 +361,15 @@ public class UploadTask {
     }
     
     fileprivate func handleError(_ error: Error) {
+        Diagnostics.record("payload.upload_error", level: .error, fields: Diagnostics.errorFields(error))
         Logger.network.error("UploadTask error: \(error, privacy: .public)")
         self.uploadFinished(success: false)
     }
     
     private func uploadFinished(success: Bool) {
         guard !isClosed else { return }
+        Diagnostics.record("payload.upload_completed", level: success ? .info : .error,
+                           fields: ["tcp_port": String(listeningPort), "result": String(success)])
         
         Logger.network.debug("uploadFinished(<\(success, privacy: .public)>)")
         

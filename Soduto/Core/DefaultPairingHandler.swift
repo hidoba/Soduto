@@ -31,6 +31,8 @@ public class DefaultPairingHandler: Pairable {
         case pairingAlreadyRequested
         case declinedByPeer
         case timedOut
+        case connectionClosed
+        case certificateUnavailable
     }
     
     
@@ -109,9 +111,10 @@ public class DefaultPairingHandler: Pairable {
                         // Every change to pairingStatus should invalidate previous timeout,
                         // so if we are here, pairingStatus should still be the same.
                         guard strongSelf.pairingStatus == status else { return }
-                        strongSelf.timeoutHandler?()
                         strongSelf.declinePairing()
+                        strongSelf.timeoutHandler?()
                     }
+                    if let timer = strongSelf.pairingTimeout { RunLoop.main.add(timer, forMode: .common) }
                 }
             }
             // Note: Connection handles pairingDelegate callbacks directly via ConnectionPairingDelegate
@@ -141,6 +144,7 @@ public class DefaultPairingHandler: Pairable {
     
     public func acceptPairing() {
         assert(self.delegate != nil, "Delegate required for \(type(of: self))")
+        guard self.pairingStatus == .RequestedByPeer else { return }
         
         if self.config.certificate == nil {
             self.config.certificate = self.delegate!.peerCertificate
@@ -189,7 +193,20 @@ public class DefaultPairingHandler: Pairable {
     /// Direct status setter for Connection to use during pairing transitions.
     /// This triggers didSet observers like direct assignment would.
     internal func setStatus(_ status: PairingStatus) {
-        self.pairingStatus = status
+        if status == .Paired {
+            self.trySetPaired()
+        } else {
+            self.pairingStatus = status
+        }
+    }
+
+    /// Disconnecting cancels only an unfinished request, never an existing pin.
+    internal func cancelPendingPairing() {
+        pairingTimeout?.invalidate()
+        pairingTimeout = nil
+        if pairingStatus == .Requested || pairingStatus == .RequestedByPeer {
+            pairingStatus = .Unpaired
+        }
     }
     
     
@@ -299,13 +316,20 @@ public extension DataPacket {
     func getPairFlag() throws -> Bool {
         try self.validatePairingType()
         guard let value = body[PairingProperty.pairFlag.rawValue] as? NSNumber else { throw PairingError.invalidPairFlag }
+        guard value.doubleValue == 0 || value.doubleValue == 1 else { throw PairingError.invalidPairFlag }
         return value.boolValue
     }
     
-    func getPairingTimestamp() throws -> Int64 {
+    func getPairingTimestamp(now: Date = Date()) throws -> Int64 {
         try self.validatePairingType()
         guard let value = body[PairingProperty.timestamp.rawValue] as? NSNumber else { throw PairingError.invalidTimestamp }
-        return value.int64Value
+        let seconds = value.doubleValue
+        // Protocol v8 uses seconds, with at most thirty minutes of clock skew.
+        // NSNumber.int64Value otherwise silently truncates or wraps bad values.
+        guard seconds.isFinite, seconds > 0, seconds < Double(Int64.max),
+              seconds.rounded(.towardZero) == seconds,
+              abs(seconds - now.timeIntervalSince1970) <= 30 * 60 else { throw PairingError.invalidTimestamp }
+        return Int64(seconds)
     }
     
     func validatePairingType() throws {

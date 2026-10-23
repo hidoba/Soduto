@@ -90,6 +90,24 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
         return true
     }
     
+    public func connectionProvider(_ provider: ConnectionProvider, probeConnectionsFor deviceId: Device.Id) {
+        self.devices[deviceId]?.probeConnections()
+    }
+
+    public func connectionProviderWillRestart(_ provider: ConnectionProvider, reason: String) {
+        Diagnostics.record("device.connections_reset", fields: ["reason": reason, "count": String(devices.count)])
+        closeAllConnections()
+    }
+
+    func diagnosticSnapshot() -> [String: Any] {
+        ["reachable_count": pairedRechableDevices.count, "unavailable_count": unavailableDevices.count,
+         "devices": devices.values.map { device in
+             ["device": Diagnostics.peer(device.id), "paired": device.pairingStatus == .Paired,
+              "reachable": device.isReachable, "incoming_capabilities": device.incomingCapabilities.sorted(),
+              "outgoing_capabilities": device.outgoingCapabilities.sorted()] as [String: Any]
+         }]
+    }
+    
     public func connectionProvider(_ provider: ConnectionProvider, didCreateConnection connection: Connection) {
         Logger.device.debug("connectionProvider(<\(provider, privacy: .public)> didCreateConnection:<\(connection, privacy: .public)>)")
         
@@ -108,7 +126,17 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
         do {
             let deviceId = try connection.identity!.getDeviceId() as Device.Id
             if let device = self.devices[deviceId] {
+                // Keep the connection represented by the verification prompt.
+                // Replacing it mid-request silently invalidates Accept/Decline.
+                if device.pairingStatus == .Requested || device.pairingStatus == .RequestedByPeer {
+                    connection.close()
+                    return
+                }
+                let wasReady = device.isReachable && device.pairingStatus == .Paired
+                if wasReady { serviceManager.cleanup(for: device) }
                 device.addConnection(connection)
+                refreshPacketHandlers(for: device)
+                if wasReady && device.pairingStatus == .Paired { serviceManager.setup(for: device) }
             }
             else if let device = self.recentDevices.removeValue(forKey: deviceId)?.device {
                 self.readdDevice(device, connection: connection)
@@ -146,6 +174,8 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
         
         // Update pairing window based on status
         DispatchQueue.main.async {
+            // A newer request can start before this queued UI update runs.
+            guard device.pairingStatus == status else { return }
             switch status {
             case .Paired:
                 PairingInterfaceController.updatePairingUI(for: device.id, success: true)
@@ -174,6 +204,7 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
         Logger.device.debug("device(<\(String(describing: device), privacy: .public)> pairingFailed:<\(error, privacy: .public)>)")
         
         DispatchQueue.main.async {
+            guard device.pairingStatus == .Unpaired else { return }
             guard PairingWindowController.isActive(for: device.id) else { return }
             
             if let pairingError = error as? DefaultPairingHandler.Error,
@@ -187,6 +218,8 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
     
     
     public func device(_ device: Device, didChangeReachabilityStatus isReachable: Bool) {
+        Diagnostics.record("device.reachability_changed", fields: ["device": Diagnostics.peer(device.id),
+                                                                 "reachable": String(isReachable), "paired": String(device.pairingStatus == .Paired)])
         Logger.device.debug("device(<\(device, privacy: .public)> didChangeReachabilityStatus:<\(isReachable, privacy: .public)>)")
         
         if device.pairingStatus == .Paired {
@@ -214,7 +247,8 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
     
     /// Close all TCP connections for all devices (force reconnect)
     public func closeAllConnections() {
-        for device in self.devices.values {
+        // Closing now reports reachability synchronously on main.
+        for device in Array(self.devices.values) {
             device.closeAllConnections()
         }
     }
@@ -247,8 +281,17 @@ public class DeviceManager: ConnectionProviderDelegate, DeviceDelegate, DeviceDa
     
     private func readdDevice(_ device: Device, connection: Connection) {
         device.addConnection(connection)
+        refreshPacketHandlers(for: device)
         device.delegate = self
         self.devices[device.id] = device
         self.device(device, didChangeReachabilityStatus: device.isReachable)
+    }
+
+    private func refreshPacketHandlers(for device: Device) {
+        // A peer can change plugins while we retain its Device during a brief
+        // outage. Rebuild dispatch from the authenticated, current identity.
+        for service in serviceManager.services { device.removeDataPacketHandler(service) }
+        let handlers: [DeviceDataPacketHandler] = serviceManager.services(supportingIncomingCapabilities: device.outgoingCapabilities)
+        device.addDataPacketHandlers(handlers)
     }
 }

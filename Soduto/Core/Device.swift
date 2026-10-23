@@ -16,7 +16,7 @@ import os
 /// - Laptop: Device is laptop computer.
 /// - Phone: Device is a mobile phone.
 /// - Tablet: Device is a tablet.
-public enum DeviceType: String {
+public enum DeviceType: String, Sendable {
     case Unknown = "unknown"
     case Desktop = "desktop"
     case Laptop = "laptop"
@@ -70,9 +70,24 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
     public let id: Id
     public let name: String
     public let type: DeviceType
-    public let incomingCapabilities: Set<Service.Capability>
-    public let outgoingCapabilities: Set<Service.Capability>
+    public private(set) var incomingCapabilities: Set<Service.Capability>
+    public private(set) var outgoingCapabilities: Set<Service.Capability>
     public let config: DeviceConfiguration
+    
+    /// Identity protocol extension fields (absent on standard KDE Connect clients).
+    public private(set) var clientName: String?
+    public private(set) var clientVersion: String?
+    public let platformName: String?
+    public private(set) var platformVersion: String?
+    
+    /// True only when the peer explicitly identifies as in our own clien family.
+    public var isSiblingClient: Bool { clientName == Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String }
+    
+    /// True when the peer is the sibling client running specifically on Android.
+    public var isAndroidCompanion: Bool { isSiblingClient && platformName == "Android" }
+    
+    /// True when the peer is the same client running specifically on macOS.
+    public var isMacOSCompanion: Bool { isSiblingClient && platformName == "macOS" }
     
     public var peerCertificate: SecCertificate? {
         if let certificate = self.connections.first?.peerCertificate { return certificate }
@@ -130,6 +145,10 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         self.type = DeviceType(rawValue: try identity.getDeviceType()) ?? DeviceType.Unknown
         self.incomingCapabilities = try identity.getIncomingCapabilities()
         self.outgoingCapabilities = try identity.getOutgoingCapabilities()
+        self.clientName = identity.getClientName()
+        self.clientVersion = identity.getClientVersion()
+        self.platformName = identity.getPlatformName()
+        self.platformVersion = identity.getPlatformVersion()
         self.config = config
         self.pairingStatus = self.config.isPaired ? .Paired : .Unpaired
         
@@ -151,6 +170,10 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         self.type = config.type
         self.incomingCapabilities = Set<Service.Capability>()
         self.outgoingCapabilities = Set<Service.Capability>()
+        self.clientName = nil
+        self.clientVersion = nil
+        self.platformName = nil
+        self.platformVersion = nil
         self.config = config
         self.pairingStatus = self.config.isPaired ? .Paired : .Unpaired
     }
@@ -169,6 +192,15 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
     public func addConnection(_ connection: Connection) {
         connection.delegate = self
         connection.pairingDelegate = self
+        // Refresh identity extension fields unconditionally so they always reflect the
+        // peer's current build (e.g. after updating the peer app).
+        if let identity = connection.identity {
+            self.clientName    = identity.getClientName()
+            self.clientVersion = identity.getClientVersion()
+            self.platformVersion = identity.getPlatformVersion()
+            if let incoming = try? identity.getIncomingCapabilities() { self.incomingCapabilities = incoming }
+            if let outgoing = try? identity.getOutgoingCapabilities() { self.outgoingCapabilities = outgoing }
+        }
         self.connections.append(connection)
         
         // remove connection of the same type if present
@@ -185,6 +217,7 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         
         self.updatePairingStatus()
         self.updateReachabilityStatus()
+        self.sendPendingPackets()
     }
     
     /// Register handler for incoming data packets. Most common handler would be Service instances
@@ -222,11 +255,32 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         if let connection = self.connectionForSending() {
             let accepted = connection.send(packet, whenCompleted: whenCompleted)
             if !accepted {
+                // Image streams are snapshots, and may already have been consumed
+                // by a failed upload. Never queue them for a later clipboard.
+                if packet.type == "kdeconnect.clipboard.file" {
+                    whenCompleted?(false, false)
+                    Diagnostics.record("clipboard.send_discarded", fields: ["device": Diagnostics.peer(id), "reason": "image_send_not_accepted"])
+                    return
+                }
                 let pendingPacket = PendingDataPacket(packet: packet, completionHandler: whenCompleted)
                 self.pendingPackets.insert(pendingPacket, at: 0)
             }
         } else {
             whenCompleted?(false, false)
+        }
+    }
+    
+    /// Cancels the upload for a specific packet ID across all active and lingering connections.
+    /// No-op if the packet ID is not found or the task has already finished.
+    public func cancelUpload(forPacketId packetId: Int64) {
+        (connections + lingeringConnections).forEach { $0.cancelUpload(forPacketId: packetId) }
+    }
+    
+    /// Sends a keepalive on every active connection to test liveness.
+    /// A write to a dead peer fails at kernel level (RST or retransmission drop), closing the connection through the normal teardown path and making the device available for rediscovery.
+    public func probeConnections() {
+        for connection in self.connections {
+            connection.sendKeepAlivePacket()
         }
     }
     
@@ -266,6 +320,15 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         }
     }
     
+    /// Forward upload progress events to services that explicitly opt-in by conforming to `ConnectionDelegate`.
+    public func connection(_ connection: Connection, uploadPayloadProgress bytesSent: Int64, totalBytes: Int64?, forPacket packet: DataPacket) {
+        for handler in packetHandlers {
+            if let delegate = handler as? ConnectionDelegate {
+                delegate.connection(connection, uploadPayloadProgress: bytesSent, totalBytes: totalBytes, forPacket: packet)
+            }
+        }
+    }
+    
     /// Forward upload completion events to services that explicitly opt-in by conforming to `ConnectionDelegate`.
     public func connection(_ connection: Connection, didSendPacket packet: DataPacket, uploadedPayload: Bool) {
         for handler in packetHandlers {
@@ -282,6 +345,7 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
     }
     
     public func connection(_ connection: Connection, didReadPacket packet: DataPacket) {
+        guard connection.state == .Open, connections.contains(where: { $0 === connection }) else { return }
         self.handle(packet: packet, onConnection: connection)
     }
     
@@ -299,11 +363,15 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
     }
     
     public func connection(_ connection: Connection, pairingFailed error: Error) {
+        connection.recordDiagnostic("pairing.failed", level: .error, error: error)
         Logger.device.debug("Connection pairing failed: \(error, privacy: .public)")
         self.delegate?.device(self, pairingFailed: error)
     }
     
     public func connection(_ connection: Connection, pairingStatusChanged status: PairingStatus) {
+        var fields = connection.diagnosticFields
+        fields["state"] = String(describing: status)
+        Diagnostics.record("pairing.state_changed", fields: fields)
         self.updatePairingStatus()
     }
     
@@ -473,8 +541,21 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         for handler in self.packetHandlers {
             let handled = handler.handleDataPacket(packet, fromDevice: self, onConnection: connection)
             if handled {
+                if Diagnostics.shared.packetTracingEnabled {
+                    Diagnostics.record("service.packet_handled", level: .debug, fields: [
+                        "device": Diagnostics.peer(id), "connection": connection.diagnosticID,
+                        "packet_type": packet.type, "packet_id": String(packet.id), "service": String(describing: Swift.type(of: handler))
+                    ])
+                }
                 return
             }
+        }
+        // Soduto's transport probe is intentionally not a service capability.
+        if packet.type != "soduto.keepalive" {
+            Diagnostics.record("service.packet_unhandled", level: .warning, fields: [
+                "device": Diagnostics.peer(id), "connection": connection.diagnosticID,
+                "packet_type": packet.type, "packet_id": String(packet.id)
+            ])
         }
     }
     
@@ -499,6 +580,13 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         
         let unsentPackets = connection.reclaimUnsentPackets()
         for unsentPacket in unsentPackets {
+            // ClipboardService sends the current value at reconnect. Replaying
+            // an older queued copy afterwards would overwrite that fresh value.
+            if ["kdeconnect.clipboard", "kdeconnect.clipboard.connect", "kdeconnect.clipboard.file"].contains(unsentPacket.dataPacket.type) {
+                unsentPacket.completionHandler?(false, false)
+                Diagnostics.record("clipboard.send_discarded", fields: ["device": Diagnostics.peer(id), "reason": "connection_closed"])
+                continue
+            }
             let pendingPacket = PendingDataPacket(packet: unsentPacket.dataPacket, completionHandler: unsentPacket.completionHandler)
             self.pendingPackets.append(pendingPacket)
         }

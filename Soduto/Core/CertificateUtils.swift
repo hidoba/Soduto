@@ -270,7 +270,7 @@ public class CertificateUtils {
         ]
         let values = SecCertificateCopyValues(certificate, oids as CFArray?, nil) as? [String:[String:AnyObject]]
         return relativeTime(forOID: kSecOIDX509V1ValidityNotAfter, values: values) >= 0.0
-        && relativeTime(forOID: kSecOIDX509V1ValidityNotBefore, values: values) <= 0.0
+            && relativeTime(forOID: kSecOIDX509V1ValidityNotBefore, values: values) <= 0.0
     }
     
     
@@ -369,27 +369,53 @@ public class CertificateUtils {
         }
     }
     
-    private class func generateRSAKeyPair(sizeInBits: Int, permanent: Bool, label: String) throws -> (SecKey, SecKey) {
-        let attributes: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-            kSecAttrKeySizeInBits as String: sizeInBits,
-            kSecAttrLabel as String: label,
-            kSecAttrIsPermanent as String: permanent
-        ]
-        
-        var error: Unmanaged<CFError>?
-        guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            let status = error.map { Int32(CFErrorGetCode($0.takeRetainedValue())) } ?? errSecInternalError
-            throw CertificateError.generateRSAKeyPairFailure(status: status)
+    /// Store only after signing the new certificate in memory. A named access
+    /// descriptor is what macOS displays in authorization dialogs; a key's label
+    /// alone does not replace the legacy "<key>" placeholder.
+    class func storePrivateKey(_ pemData: Data, keychain: SecKeychain? = nil) throws -> SecKey {
+        let displayName = "Soduto Device Identity"
+        var access: SecAccess?
+        // nil uses the system default: trust only the creating application.
+        let accessStatus = SecAccessCreate(displayName as CFString, nil, &access)
+        guard accessStatus == errSecSuccess, let access else {
+            throw CertificateError.addKeyFailure(status: accessStatus)
         }
-        
-        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
-            throw CertificateError.generateRSAKeyPairFailure(status: errSecInternalError)
+        var destination = keychain
+        if destination == nil {
+            let status = SecKeychainCopyDefault(&destination)
+            guard status == errSecSuccess else { throw CertificateError.addKeyFailure(status: status) }
         }
-        
-        return (publicKey, privateKey)
+        guard let destination else { throw CertificateError.addKeyFailure(status: errSecNoDefaultKeychain) }
+        var parameters = SecItemImportExportKeyParameters()
+        parameters.version = UInt32(SEC_KEY_IMPORT_EXPORT_PARAMS_VERSION)
+        parameters.accessRef = .passUnretained(access)
+        let usage = [kSecAttrCanSign] as CFArray
+        parameters.keyUsage = .passUnretained(usage)
+        // New stored keys cannot be exported, even by the creating app.
+        let attributes = [kSecAttrIsPermanent, kSecAttrIsSensitive] as CFArray
+        parameters.keyAttributes = .passUnretained(attributes)
+        var format = SecExternalFormat.formatOpenSSL
+        var type = SecExternalItemType.itemTypePrivateKey
+        var items: CFArray?
+        let status = withExtendedLifetime((access, usage, attributes)) {
+            SecItemImport(pemData as CFData, nil, &format, &type, [], &parameters, destination, &items)
+        }
+        guard status == errSecSuccess, let keys = items as? [SecKey], keys.count == 1 else {
+            throw CertificateError.addKeyFailure(status: status)
+        }
+        let key = keys[0]
+        let labelStatus = SecItemUpdate([
+            kSecClass: kSecClassKey, kSecMatchItemList: [key], kSecMatchSearchList: [destination]
+        ] as CFDictionary, [
+            kSecAttrLabel: displayName
+        ] as CFDictionary)
+        guard labelStatus == errSecSuccess else {
+            try? deleteKey(key)
+            throw CertificateError.addKeyFailure(status: labelStatus)
+        }
+        return key
     }
-    
+
     public class func createIdentity(label: String, certCommonName: String, expirationInterval: TimeInterval) throws -> SecIdentity? {
         // Clean up any orphaned certificates to avoid conflicts
         // (e.g., user deleted "Soduto Host" preference but not the underlying certificate)
@@ -398,26 +424,13 @@ public class CertificateUtils {
             try? deleteCertificate(certCommonName)
         }
         
-        // Generate RSA keypair (stored permanently in keychain)
-        let (publicKey, privateKey) = try generateRSAKeyPair(sizeInBits: 2048, permanent: true, label: label)
-        
-        try? deleteKey(publicKey) // public key not needed
-        
+        // New identities are generated in memory. Stored identities are never
+        // exported, including on first launch; getOrCreateIdentity reuses them.
+        var savedPrivateKey: SecKey?
         do {
-            // Export private key to PEM format for swift-crypto
-            var privateKeyCFData: CFData? = nil
-            let exportStatus = SecItemExport(privateKey, .formatOpenSSL, .pemArmour, nil, &privateKeyCFData)
-            guard exportStatus == errSecSuccess, let pemData = privateKeyCFData as Data? else {
-                throw CertificateError.createIdentityFailure(status: exportStatus)
-            }
-            
-            guard let pemString = String(data: pemData, encoding: .utf8) else {
-                throw CertificateError.createIdentityFailure(status: errSecInternalError)
-            }
-            
-            // Parse PEM key with swift-crypto
-            let rsaPrivateKey = try _RSA.Signing.PrivateKey(pemRepresentation: pemString)
-            
+            let rsaPrivateKey = try _RSA.Signing.PrivateKey(keySize: .bits2048)
+            let pemData = Data(rsaPrivateKey.pemRepresentation.utf8)
+
             // Create self-signed certificate using swift-certificates
             let certificate = try createSelfSignedCertificate(
                 commonName: certCommonName,
@@ -435,6 +448,10 @@ public class CertificateUtils {
                 throw CertificateError.createCertificateFailure(error: nil)
             }
             
+            // Give the permanent key a readable label and normal creator-only
+            // access. TLS uses SecKeyCreateSignature, never another export.
+            savedPrivateKey = try storePrivateKey(pemData)
+
             // Add certificate to keychain
             try addCertificate(secCertificate, name: label)
             guard let savedCertificate = findCertificate(label) else {
@@ -458,7 +475,7 @@ public class CertificateUtils {
             }
         }
         catch {
-            try? deleteKey(privateKey)
+            if let savedPrivateKey { try? deleteKey(savedPrivateKey) }
             throw error
         }
     }
@@ -469,7 +486,7 @@ public class CertificateUtils {
     ///   - privateKey: The RSA private key to sign the certificate with
     ///   - expirationInterval: How long the certificate should be valid (from now)
     /// - Returns: A signed X.509 certificate
-    private class func createSelfSignedCertificate(
+    class func createSelfSignedCertificate(
         commonName: String,
         privateKey: _RSA.Signing.PrivateKey,
         expirationInterval: TimeInterval

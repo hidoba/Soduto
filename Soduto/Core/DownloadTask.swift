@@ -17,6 +17,11 @@ import os
 /// Delegate protocol for DownloadTask events.
 public protocol DownloadTaskDelegate: AnyObject {
     func downloadTask(_ task: DownloadTask, finishedWithSuccess success: Bool)
+    func downloadTask(_ task: DownloadTask, didReceiveBytes bytesReceived: Int64, totalBytes: Int64?)
+}
+
+public extension DownloadTaskDelegate {
+    func downloadTask(_ task: DownloadTask, didReceiveBytes bytesReceived: Int64, totalBytes: Int64?) {}
 }
 
 /// Download task for receiving file payloads over TLS.
@@ -74,7 +79,9 @@ public class DownloadTask {
     private var bytesReceived: Int64 = 0
     private var bytesReceivedFromNetwork: Int64 = 0  // Tracked synchronously for completion check
     private var isClosed: Bool = false
+    public private(set) var cancelRequested: Bool = false
     private var trustHandler: PayloadClientTrustHandler?
+    private var lastProgressReportTime: Date = .distantPast
     
     // MARK: Init / Deinit
     
@@ -140,6 +147,7 @@ public class DownloadTask {
     
     /// Cancels the download.
     public func cancel() {
+        cancelRequested = true
         self.channel?.close(promise: nil)
     }
     
@@ -194,7 +202,11 @@ public class DownloadTask {
         bootstrap.connect(to: targetAddress).whenComplete { [weak self] result in
             switch result {
             case .success(let channel):
-                self?.channel = channel
+                if self?.cancelRequested == true {
+                    channel.close(promise: nil)
+                } else {
+                    self?.channel = channel
+                }
             case .failure(let error):
                 Logger.network.error("DownloadTask connection failed: \(error, privacy: .public)")
                 self?.downloadFinished(success: false)
@@ -205,40 +217,7 @@ public class DownloadTask {
     // MARK: Private - TLS
     
     private func createTLSConfiguration() throws -> TLSConfiguration {
-        // Extract certificate and private key from SecIdentity
-        var certificate: SecCertificate?
-        let certStatus = SecIdentityCopyCertificate(hostIdentity, &certificate)
-        guard certStatus == errSecSuccess, let cert = certificate else {
-            throw DownloadTaskError.failedToLoadCertificate
-        }
-        
-        var privateKey: SecKey?
-        let keyStatus = SecIdentityCopyPrivateKey(hostIdentity, &privateKey)
-        guard keyStatus == errSecSuccess, let key = privateKey else {
-            throw DownloadTaskError.failedToLoadPrivateKey
-        }
-        
-        // Convert to NIOSSLCertificate and NIOSSLPrivateKey
-        let certData = SecCertificateCopyData(cert) as Data
-        let sslCert = try NIOSSLCertificate(bytes: Array(certData), format: .der)
-        
-        var error: Unmanaged<CFError>?
-        guard let keyData = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
-            throw DownloadTaskError.failedToLoadPrivateKey
-        }
-        
-        let sslKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .der)
-        
-        var config = TLSConfiguration.makeClientConfiguration()
-        config.certificateChain = [.certificate(sslCert)]
-        config.privateKey = .privateKey(sslKey)
-        
-        // For mutual TLS with self-signed certificates:
-        // - Use custom verification callback for trust decisions
-        config.certificateVerification = .noHostnameVerification
-        config.minimumTLSVersion = .tlsv12
-        
-        return config
+        try KeychainTLSIdentity.configuration(for: hostIdentity, server: false)
     }
     
     // MARK: Private - Data Handling
@@ -248,6 +227,7 @@ public class DownloadTask {
     }
     
     fileprivate func handleDataReceived(_ data: Data) {
+        guard !cancelRequested else { return }
         guard let stream = self.stream, stream.hasSpaceAvailable else {
             Logger.network.error("DownloadTask: stream not available for writing")
             self.channel?.close(promise: nil)
@@ -288,6 +268,18 @@ public class DownloadTask {
             guard batchBytesWritten < data.count else { break }
         }
         
+        // Fire progress callback (throttled to 500ms)
+        let now = Date()
+        if now.timeIntervalSince(self.lastProgressReportTime) >= 0.5 {
+            self.lastProgressReportTime = now
+            let recv = self.bytesReceived
+            let total = self.payloadSize
+            self.delegateQueue.async { [weak self] in
+                guard let self else { return }
+                self.delegate?.downloadTask(self, didReceiveBytes: recv, totalBytes: total)
+            }
+        }
+        
         // Check if we've received all expected data
         if let payloadSize = self.payloadSize, self.bytesReceived >= payloadSize {
             self.channel?.close(promise: nil)
@@ -295,6 +287,11 @@ public class DownloadTask {
     }
     
     fileprivate func handleChannelInactive() {
+        // If user cancelled, always treat as failure regardless of bytes already buffered
+        guard !cancelRequested else {
+            self.downloadFinished(success: false)
+            return
+        }
         // Use bytesReceivedFromNetwork (updated synchronously) rather than bytesReceived
         // (updated asynchronously on writeQueue) to avoid race condition where channel
         // closes before async writes complete
@@ -309,12 +306,17 @@ public class DownloadTask {
     }
     
     fileprivate func handleError(_ error: Error) {
+        var fields = Diagnostics.errorFields(error)
+        fields["packet_id"] = String(id)
+        Diagnostics.record("payload.download_error", level: .error, fields: fields)
         Logger.network.error("DownloadTask error: \(error, privacy: .public)")
         self.downloadFinished(success: false)
     }
     
     private func downloadFinished(success: Bool) {
         guard !isClosed else { return }
+        Diagnostics.record("payload.download_completed", level: success ? .info : .error,
+                           fields: ["packet_id": String(id), "result": String(success), "bytes": String(bytesReceivedFromNetwork)])
         
         // Capture delegate before close() clears it
         let delegate = self.delegate
