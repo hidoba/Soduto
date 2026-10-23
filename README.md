@@ -1,5 +1,13 @@
 # Soduto — hidoba fork
 
+## TLDR
+
+- Supports copying images and single files.
+- Shows the number of connected devices as a badge over the menu bar icon.
+- Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8 support, SMS conversation browsing and sending messages from your Mac through a paired Android phone, contact syncing, and service/interface refinements.
+- Adds diagnostic logs (off by default).
+- Includes connection and pairing bug fixes and improvements.
+
 A macOS KDE Connect client focused on clipboard sync, pairing, connection recovery,
 and useful diagnostics. This fork combines the upstream `fix/network-reliability`
 and `feat/refine-services` branches, with additional fixes for those connection paths.
