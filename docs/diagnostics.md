@@ -71,9 +71,11 @@ Build 32 adds complete ad-hoc app-bundle signing and a strict signature check
 before packaging. It is not Developer ID signing or notarization. Build 31's
 bundle failed signature verification despite its linker-signed executable.
 Legacy keys retain their `<key>` access description. The affected key has separate
-signing and app-trust checks; approval persistence needs an interactive restart
-check and has not yet been confirmed for that key. Automatic test success alone
-does not establish that the user's Always Allow choice will persist.
+signing and app-trust checks. On 2026-10-23, macOS recorded Always Allow for the
+installed build 32. Restarting that exact unchanged copy completed eight TLS
+handshakes without additional Keychain prompts or signing failures during
+observation. This interactive result is separate from the automated tests and
+does not guarantee that a different app binary will retain the same approval.
 
 Build 31 avoids the implicit private-key exports that still occurred in build 30
 for legacy identities. Apple's high-level RSA signing and algorithm-support APIs

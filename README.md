@@ -57,9 +57,11 @@ both architectures before publishing. This is not Developer ID signing or
 notarization; an updated binary can still require new Keychain approval.
 
 The affected Mac also has separate legacy signing and app-trust permissions.
-**Whether Always Allow persists for that existing key still needs the interactive
-approval/restart check; it is not established by the automated tests.** The key's
-old `<key>` description is retained, along with its existing access controls.
+**Always Allow was verified on the existing key on 2026-10-23:** after approval,
+the exact same installed build was restarted without changing its files. It
+completed eight TLS handshakes with no signing, app-trust or export prompts and
+no Keychain signing failures during observation. The old `<key>` description is
+retained. This verifies that restart; future app replacements may need approval.
 
 Build 31 fixes the **“export key \<key\>”** loop that remained in build 30 for
 legacy identities. A runtime trace showed that Apple's high-level RSA signing and
