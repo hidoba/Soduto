@@ -7,11 +7,10 @@
 - Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8, SMS conversation browsing and sending through a paired Android phone, contact syncing, and service/interface refinements.
 - Adds diagnostic logs, **off by default**, to help report and debug problems.
 - Includes connection improvements and bugfixes for clipboard sync, pairing, sleep/wake, Wi-Fi changes, and repeated Keychain prompts.
+- Built and published by **GitHub Actions**, with signed provenance so you can [verify that the binary was built from this repository's code](docs/release-verification.md). Look for **“github-actions released this”** on the [Releases page](https://github.com/hidoba/Soduto/releases).
 
 **[Download Soduto 3.2.1](https://github.com/hidoba/Soduto/releases/latest)**
 · [Release notes](docs/releases/3.2.1.md)
-
-From build 37, releases are built and published by **GitHub Actions**, after all checks pass. A signed build attestation links each download to its source commit and workflow. [Verify the release](docs/release-verification.md).
 
 Requires **macOS 14 or newer**. The app supports **Apple Silicon and Intel** and is ad-hoc signed, without Developer ID signing or notarization.
 
