@@ -79,6 +79,15 @@ func imageScenarios() {
     precondition(peer.sent.isEmpty && other.sent.count == 1)
     print("PASS: KDE image payload applies and relays once without using the supplied filename as a path")
 
+    let remoteURL = DataPacket(type: "kdeconnect.clipboard.connect", body: [
+        "content": "file:///tmp/synthetic-kde-image/clipboard.png" as NSString,
+        "timestamp": NSNumber(value: Date().addingTimeInterval(60).timeIntervalSince1970 * 1000)
+    ])
+    let beforeURLConnect = NSPasteboard.general.changeCount
+    _ = service.handleDataPacket(remoteURL, fromDevice: peer, onConnection: connection)
+    precondition(NSPasteboard.general.changeCount == beforeURLConnect && NSPasteboard.general.content == nil)
+    print("PASS: KDE's temporary image URL in a reconnect packet cannot turn an image into remote path text")
+
     let beforeDuplicate = NSPasteboard.general.changeCount
     let endCount = completedImages()
     (packet, task) = imagePacket(fixture(.blue, type: .tiff))

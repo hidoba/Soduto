@@ -140,6 +140,9 @@ Identical text never clears the pasteboard, preserving its other representations
 On reconnect, obsolete queued clipboard sends are discarded and current text
 is synchronized instead. Images synchronize on copy while connected; the protocol
 has no image reconnect freshness handshake.
+KDE's reconnect text packet can contain the temporary URL of a received image;
+`image_file_url_connect` records ignoring that URL while a local image is present.
+Ordinary live text packets containing URLs remain supported.
 
 From build 33, `clipboard.image_receiving`, `image_sent`, `image_applied`,
 `image_ignored`, `image_cancelled`, and `image_failed` events record image decisions

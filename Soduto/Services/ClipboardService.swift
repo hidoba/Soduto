@@ -121,6 +121,13 @@ public class ClipboardService: BidirectionalService, DownloadTaskDelegate {
                 logDecision("ignored", device: device, reason: "invalid_content")
                 return true
             }
+            // KDE stores received images as temporary file URLs, and its text
+            // reconnect packet can serialize that URL as `content`. It isn't a
+            // newer text copy and must not turn our image into a remote temp path.
+            if pasteboardHasImage, URL(string: contents)?.isFileURL == true {
+                logDecision("ignored", device: device, reason: "image_file_url_connect")
+                return true
+            }
             let remoteMilliseconds = (try? dataPacket.getTimestamp()) ?? 0
             if syncState.shouldAcceptConnect(timestampMilliseconds: remoteMilliseconds) {
                 applyExternalClipboard(contents, from: device, timestamp: remoteMilliseconds)
