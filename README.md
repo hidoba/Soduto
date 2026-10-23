@@ -2,262 +2,60 @@
 
 ## TLDR
 
-- Supports copying images and single files with peers that support it (GSConnect doesn't support that yet but I have a [fork](https://github.com/hidoba/gnome-shell-extension-gsconnect/tree/hidoba)).
-- Shows the number of connected devices as a badge over the menu bar icon.
-- Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8 support, SMS conversation browsing and sending messages from your Mac through a paired Android phone, contact syncing, and service/interface refinements. (upstream `fix/network-reliability` and `feat/refine-services` branches).
-- Adds diagnostic logs (off by default) so you can open better issues and PRs.
-- Includes connection and pairing bug fixes and improvements.
+- Supports copying images and single files with compatible peers. Official GSConnect supports text clipboard only; see my [GSConnect fork](https://github.com/hidoba/gnome-shell-extension-gsconnect/tree/hidoba) for image/file clipboard work.
+- Shows the number of connected devices as a small badge over the menu bar icon, or `×` when none are connected.
+- Includes unfinished and unreleased work from [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto): protocol v8, SMS conversation browsing and sending through a paired Android phone, contact syncing, and service/interface refinements.
+- Adds diagnostic logs, **off by default**, to help report and debug problems.
+- Includes connection improvements and bugfixes for clipboard sync, pairing, sleep/wake, Wi-Fi changes, and repeated Keychain prompts.
 
-**Current release: [3.2.1 (build 35)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
-
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-35-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-35-macos-universal.zip.sha256)
+**[Download Soduto 3.2.1](https://github.com/hidoba/Soduto/releases/latest)**
 · [Release notes](docs/releases/3.2.1.md)
 
-This is an **ad-hoc-signed, unnotarized development release** for **macOS 14 or newer**,
-with a universal **Apple Silicon (`arm64`) and Intel (`x86_64`)** executable.
+Requires **macOS 14 or newer**. The app supports **Apple Silicon and Intel** and is ad-hoc signed, without Developer ID signing or notarization.
 
-## What changed
+## Clipboard
 
-### Clipboard
+Copy text, an image, or one regular file on either computer and paste it on the other. Image and file transfers require a peer supporting KDE Connect's `kdeconnect.clipboard.file` protocol, such as KDE Connect 25.12.3. A successful text copy or pairing alone does not establish image/file support.
 
-- Cancel superseded outgoing image/file uploads on a
-  new copy, accepted remote content, peer disconnect, or disabling outgoing sharing.
-  A duplicate incoming file cancels only an upload to its sender, preserving
-  transfers to other peers. Completed uploads leave cancellation tracking.
-- Stage received files without evicting anything; publish only after checking
-  clipboard and connection freshness. Prune after a successful clipboard update,
-  checking the live selection before each removal. An obsolete background transfer
-  cannot delete an older cached file restored to the clipboard.
-- Preserve every unmarked KDE payload as its original file, including SVGs and
-  images exceeding the bitmap pixel limit. Add an optional PNG preview when it can
-  be decoded within the image limits. Require bitmap decoding only for explicitly
-  image-only payloads from this fork.
-- Include safe filename and original bytes in file duplicate detection. Receiving
-  identical pixels as `second.png` after `first.png` updates the copied filename
-  and relays the original file. Explicit bitmap generations still compare pixels.
-- **Image clipboard:** send copied macOS PNG/TIFF images as PNG and
-  receive image payloads using KDE Connect's `kdeconnect.clipboard.file` protocol,
-  already supported by KDE Connect **25.12.3**. Images take priority over alternate
-  text representations. The existing incoming/outgoing clipboard switches apply.
-  Transfers are limited to **50 MiB**. Bitmap conversion and previews are limited
-  to **16,777,216 decoded pixels**; original files can transfer without a preview.
-  Invalid explicit bitmap payloads and incomplete, obsolete or disconnected
-  transfers cannot replace a newer copy.
-  Images synchronize on copy while connected; old images are not replayed on
-  reconnect.
-  On Linux, KDE Connect exposes received images as temporary file URLs, so paste
-  behavior depends on the target application and desktop clipboard integration.
-  [KDE Connect 25.12.3 implementation](https://github.com/KDE/kdeconnect-kde/blob/v25.12.3/plugins/clipboard/clipboardplugin.cpp).
-- **File clipboard:** copy one regular file in Finder and paste it on
-  the connected computer, or copy one on KDE Connect and paste it in Finder.
-  The limit is **50 MiB**, including support for empty files. Folders, symlinks
-  and multiple-file selections are ignored. Uploads use an immutable snapshot;
-  received files retain a safe basename and are never opened automatically.
-  They live in a private cache (0700 directories, 0600 files), with 24-hour expiry
-  and a 200 MiB budget. The file currently on the clipboard is protected from
-  eviction. Clipboard direction switches and stale-transfer checks apply.
-  Source files are never moved or modified. Image files within the image limits also offer a bitmap
-  representation for applications that paste images rather than file URLs. Older
-  cache entries are pruned after new incoming content is accepted.
-- Keep observing local copies while disconnected, so a new offline copy is not
-  replaced by older text when a peer reconnects.
-- Check for copies between timer ticks before comparing reconnect timestamps.
-  Non-text copies also advance freshness, protecting newly copied images and files.
-- Prevent identical text and previously seen generations from circulating through
-  multiple peers. Forward fresh generations across a hub even when it already has
-  that text, without rewriting the pasteboard.
-- Preserve other pasteboard representations when the text is already identical.
-- Give rapid copies increasing timestamps, converge simultaneous edits, and allow
-  deliberately copying earlier text again. Ordinary KDE Connect clipboard packets
-  remain live edits regardless of the sender's clock.
-- Refresh negotiated clipboard capabilities and service dispatch after reconnects,
-  and discard obsolete queued clipboard copies.
+- Image and file transfers are limited to **50 MiB**. Folders, symlinks, and multiple-file selections are unsupported.
+- Incoming and outgoing clipboard sharing can be enabled separately. Outdated transfers cannot overwrite newer copies.
+- Source files are preserved. Received files use a private temporary cache and are never opened automatically.
 
-### Pairing and reconnects
+On Linux, received images are exposed as temporary file URLs. Paste behavior depends on the target application and desktop clipboard integration, particularly on GNOME/Wayland. End-to-end image/file clipboard compatibility with Ubuntu GNOME/Wayland still needs real-device validation.
 
-- **Connection recovery:** preserve working sockets when macOS repeats an
-  equal network-path notification. Real path changes and explicit reconnects still
-  recover connections, and an available path can retry a failed service start.
-- Log each peer's image/file clipboard support separately for sending and receiving.
-  `no_image_capable_peer` / `no_file_capable_peer` mean no compatible peer was
-  available and the copy was not sent. GSConnect currently supports text clipboard
-  only; a successful pairing or text copy does not establish image/file support.
-- Support KDE Connect protocol versions **7 and 8**, including v8 request timestamp
-  validation and certificate-based verification codes.
-- Require the peer's TLS certificate before pairing can succeed. Ignore duplicate
-  confirmations without creating reply loops; fresh re-pair requests ask for approval.
-- Cancel unfinished pairing requests and timers on disconnect while preserving
-  established certificate pins during ordinary connection loss.
-- Keep competing connections and queued results from invalidating a verification
-  prompt. Superseded sockets cannot apply delayed clipboard or unpair packets.
-- Process connection, packet, and pairing callbacks in order on the main queue,
-  including the handoff before the first service packet arrives.
-- Reset old connections after wake and network changes. Connection initialization
-  has a **10-second deadline**, with its last phase recorded if it times out.
+## Connection improvements and bugfixes
 
-### Keychain authorization
+Supports KDE Connect protocols **7 and 8**, improves recovery after sleep or network changes, and avoids unnecessary disconnects. Pairing uses certificate verification and handles interrupted requests without reply loops. Clipboard fixes improve freshness, duplicate handling, and transfers between multiple devices.
 
-Seals the **complete app bundle and nested code with ad-hoc signatures**.
-Packaging now verifies the complete resource seal and
-both architectures before publishing. This is not Developer ID signing or
-notarization; an updated binary can still require new Keychain approval.
+Keychain fixes avoid private-key exports and repeated authorization attempts while preserving existing identities and pairings. Updating the app may still require normal Keychain approval. Use **Diagnostics → Reconnect All Devices** to retry after denying access.
 
-The affected Mac also has separate legacy signing and app-trust permissions.
-**Always Allow was verified on the existing key on 2026-10-23:** after approval,
-the exact same installed build was restarted without changing its files. It
-completed eight TLS handshakes with no signing, app-trust or export prompts and
-no Keychain signing failures during observation. The old `<key>` description is
-retained. This verifies that restart; future app replacements may need approval.
+## Connection badge
 
-Fixes the **“export key \<key\>”** loop that remained in build 30 for
-legacy identities. A runtime trace showed that Apple's high-level RSA signing and
-algorithm checks internally read private-key attributes, which attempt to export
-older keys. New nonexportable keys in the previous tests concealed this behavior.
-
-TLS now obtains the key size from the public certificate, encodes RSA-PSS or
-PKCS#1 signatures, and uses Keychain's raw RSA signing operation. It never reads
-private-key attributes or exports a stored private key. TLS 1.2 and 1.3 retain
-ephemeral key exchange. New identities receive the readable Keychain name
-**Soduto Device Identity** and are stored as nonexportable.
-
-Existing certificates, keys and pairings are retained. Their old Keychain display
-name can remain `<key>`; updating does not replace the identity or rewrite its
-access controls. An app replacement can still require a normal Keychain
-access approval. If access is denied, automatic attempts are suspended
-to prevent repeated dialogs. Use **Diagnostics → Reconnect All Devices** to retry
-explicitly, or restart Soduto. Temporary Keychain errors can recover during
-ordinary reconnects after wake or unlock. Keychain signing failures appear in Console and,
-when log writing is enabled, the diagnostic journal. No key material is logged.
-
-### Connection badge
-
-The existing menu bar icon now has a **small badge over its upper-right corner**.
-It keeps the original square width and updates without opening the menu.
-
-| Paired, reachable devices | Badge |
-| --- | --- |
-| None | `×` |
-| 1–99 | The connected count |
-| 100 or more | `99+` |
-
-Hover over the icon for the full count. The badge counts connected, paired devices,
-not discovery results or individual sockets. Its tooltip and accessibility label
-also update with the connection state.
+The badge shows the number of connected, paired devices: `×` for none, the count for 1–99, and `99+` above that. Hover over the icon for the full count.
 
 ![Connection badge examples in dark and light appearances](docs/images/menu-bar-connection-badge.png)
 
-Examples above: `×`, `1`, `12`, `99`, and `99+`. The image was rendered with native
-AppKit using the actual badge drawing code.
+## Diagnostics
 
-### Persistent diagnostics
+Logging is **off by default**. Enable **Write diagnostic logs** in **Preferences → Diagnostics** or the **Diagnostics** menu directly above **Quit**.
 
-**Write diagnostic logs is off by default.** Enable it in
-**Preferences → Diagnostics → Write diagnostic logs** or the
-**Diagnostics → Write diagnostic logs** menu item. Both controls share the same
-saved setting. No diagnostic journal is created or appended automatically while
-the setting is off. Turning it off drains pending writes and closes the log file;
-existing logs are kept. Your choice is remembered across launches.
+To report a problem, enable logging, reproduce it, then select **Diagnostics → Export Diagnostic Bundle…** before reconnecting. Logs cover connections, pairing, and clipboard decisions without recording clipboard contents, filenames, IP/MAC addresses, certificates, or private keys. Nothing is uploaded automatically.
 
-The **Diagnostics** menu sits directly **above Quit**. Export, open-log-folder and
-detailed-packet-logging actions are disabled while writing is off; **Reconnect
-All Devices** stays available. To export older logs, enable writing again first.
-Ordinary macOS Console logging is separate from this diagnostic journal.
+Logs are capped at **20 MiB**. Turning logging off stops collection and keeps existing logs. Log-related menu actions are disabled while logging is off; **Reconnect All Devices** remains available.
 
-![Diagnostic log-writing setting](docs/images/diagnostics-settings.png)
+See the [diagnostics guide](docs/diagnostics.md) for troubleshooting and testing details.
 
-The **Diagnostics** menu provides **Export Diagnostic Bundle…**, **Open Diagnostic
-Logs**, **Detailed Packet Logging**, and **Reconnect All Devices**.
+## Install and update
 
-- A rotating JSON journal retains **four files of up to 5 MiB each** across restarts.
-- Events include sleep/wake, network changes, discovery, TCP/TLS handshakes, pairing,
-  packet dispatch, clipboard decisions, and transfer completion or failure.
-- Session, connection, and temporary device aliases let related events be followed
-  through the timeline. Exports include a runtime snapshot.
-- The journal excludes packet bodies, clipboard text, notifications, filenames,
-  file contents, IP/MAC addresses, certificates, and private keys. Clipboard replay
-  fingerprints stay in bounded memory and are never logged. No logs are uploaded.
+1. Download the ZIP and matching `.sha256` file from the [latest release](https://github.com/hidoba/Soduto/releases/latest). Verify the ZIP with `shasum -a 256 -c <downloaded-checksum-file>`.
+2. Quit Soduto and other Mac KDE Connect clients, extract the ZIP, and move `Soduto.app` into Applications. macOS may block this unnotarized app.
+3. Launch Soduto and pair your devices. Updates of this fork preserve its pairings and preferences; the first installation pairs as a new Mac device.
 
-To capture a problem, enable log writing, reproduce the issue, and export a bundle
-**before** using **Reconnect All Devices**. You can then turn log writing off again.
-See [diagnostics and testing](docs/diagnostics.md) for the event guide, storage
-locations, privacy details, and real-device test checklist.
+Updates are manual: use **Fork Releases on GitHub…** in the app. Automatic upstream updates are disabled.
 
-## Validation and compatibility
+## Build and test
 
-**119 automated checks pass**, alongside a complete Release build of the app and
-extensions on macOS 26:
-
-| Checks | Count | Coverage |
-| --- | ---: | --- |
-| Native reliability tests | 20 | Clipboard state, recovery policy, journal privacy, persistence, rotation, and ZIP export |
-| Clipboard integration scenarios | 60 | Text/image/file transfers, packet framing, replay/freshness, native AppKit formats, limits, cache privacy/retention, directions, relay meshes and all four build-33 review findings |
-| Pairing/transport integration scenarios | 17 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
-| Diagnostic settings scenarios | 6 | Default-off behavior, persistence, concurrent stop, menu placement, UI synchronization, and disabled controls |
-| Keychain/TLS regression tests | 16 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, legacy export-protected and nonexportable keys, 4096-bit identities, reconnects, denial and temporary errors |
-| **Total** | **119** | |
-
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39947540970)
-· [Built source revision: `5035fa5`](https://github.com/hidoba/Soduto/commit/5035fa5b934f8a7f47996f8b37cb818a44b7753a)
-
-The downloaded archive's checksum, universal executable, version **3.2.1 (35)**,
-fork bundle ID, source revision, and update settings were verified. The menu badge
-was also compiled and rendered in light and dark appearances.
-
-An additional native regression uses a legacy export-protected key in a temporary
-keychain and a separate consumer process: **600 signatures** across all six TLS
-schemes are verified with Apple's public-key verifier. On the affected Mac, the
-old API was sampled blocked in private-key export, while the replacement completed
-without export approval. No login Keychain permissions were changed.
-
-Keychain/TLS tests use real Security and NIOSSL APIs with memory-only keys,
-isolated temporary keychains and loopback sockets. The clipboard/pairing scenarios
-use fake transport, clipboard, certificate storage and windows. Image/file codecs,
-packet framing and temporary cache operations are real, with native AppKit checks
-on unique private pasteboards; diagnostic settings
-scenarios use isolated preferences and temporary journal files. They do not exercise
-the actual Ubuntu peer. The reported target setup is
-Ubuntu GNOME/Wayland with KDE Connect **25.12.3**. End-to-end compatibility and repeated
-sleep/Wi-Fi recovery with that setup still need real-device validation. GNOME/Wayland
-clipboard integration also depends on the Linux desktop; see the diagnostic guide.
-**GSConnect's clipboard plugin currently synchronizes text only:** it does not
-advertise or handle `kdeconnect.clipboard.file`, so image/file clipboard sync will
-not work through GSConnect. These features require a compatible peer such as
-KDE Connect with the clipboard-file capability enabled. A successful text copy or
-pairing alone does not establish image/file support.
-[GSConnect clipboard implementation](https://github.com/GSConnect/gnome-shell-extension-gsconnect/blob/main/src/service/plugins/clipboard.js).
-Protocol support is not a guarantee that every inherited service works with every
-KDE Connect client. The additional fixes here focus on clipboard, pairing, and their
-shared connection lifecycle.
-
-## Download and install
-
-1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (35)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
-2. In the directory containing both downloads, verify the archive:
-
-   ```sh
-   shasum -a 256 -c Soduto-3.2.1-35-macos-universal.zip.sha256
-   ```
-
-3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
-   ad-hoc signed, without Developer ID signing or notarization; macOS may block it. For a development-signed build,
-   use Xcode with your own Apple Developer team as described below.
-4. Quit the running copy and other Mac KDE Connect/Soduto clients before updating
-   or testing. A first install of this fork pairs as a new Mac device; updates of
-   this fork preserve its existing pairing and preferences.
-
-The fork uses bundle ID **`com.hidoba.Soduto`**, with its own preferences and
-keychain identity names. Automatic upstream Sparkle updates are disabled. Use
-**Fork Releases on GitHub…** in the app for manual updates from
-[our releases](https://github.com/hidoba/Soduto/releases).
-
-The checksum verifies download integrity; it is not a code-signing or notarization
-claim. Additional CI artifacts remain available from [GitHub Actions](https://github.com/hidoba/Soduto/actions/workflows/build.yml).
-
-## Build and run the checks
-
-Use **Xcode 26 or newer**. Clone this fork's default development branch:
+Use **Xcode 26 or newer**:
 
 ```sh
 git clone --branch codex/reliability-diagnostics https://github.com/hidoba/Soduto.git
@@ -266,10 +64,7 @@ cp LocalConfig.xcconfig.example LocalConfig.xcconfig
 open Soduto.xcodeproj
 ```
 
-Set your `DEVELOPMENT_TEAM` in the untracked `LocalConfig.xcconfig`; keep the fork's
-bundle ID. Let Xcode resolve the Swift package dependencies, then build the
-`Soduto` scheme. Local signing settings belong in that file rather than the shared
-project file.
+Set your `DEVELOPMENT_TEAM` in `LocalConfig.xcconfig`, keep the fork's bundle ID, let Xcode resolve the Swift packages, and build the `Soduto` scheme.
 
 Run the regression checks with the Xcode toolchain selected:
 
@@ -282,30 +77,12 @@ python3 scripts/test-keychain-tls.py
 python3 scripts/test-keychain-legacy.py
 ```
 
-To reproduce the old export prompt with a disposable synthetic key on a Mac with
-a logged-in desktop session, run `python3 scripts/test-keychain-legacy.py --prove-old-prompt`.
-The runner captures the blocked stack, terminates the control process and deletes
-only its temporary keychain. No password entry is needed. This optional control
-intentionally displays an approval dialog; the fixed signing path must finish
-without it.
-
-The [build workflow](.github/workflows/build.yml) contains the complete development
-Release build and packaging commands. The historical certificate tests are not
-run there because they modify the user's default keychain.
+See the [build workflow](.github/workflows/build.yml) for CI and packaging, and the [diagnostics guide](docs/diagnostics.md) for real-device tests.
 
 ## Upstream work and attribution
 
-This fork integrates:
+This fork combines the upstream [`fix/network-reliability`](https://github.com/sannidhyaroy/Soduto/commit/ca7db3a) and [`feat/refine-services`](https://github.com/sannidhyaroy/Soduto/commit/afcc62d) branches with additional clipboard, pairing, and connection fixes.
 
-- [`fix/network-reliability` at `ca7db3a`](https://github.com/sannidhyaroy/Soduto/commit/ca7db3a): connection and discovery recovery work.
-- [`feat/refine-services` at `afcc62d`](https://github.com/sannidhyaroy/Soduto/commit/afcc62d): service and interface refinements.
+Other inherited features include notifications, file sharing/SFTP, battery reporting, media controls, and remote input. See [upstream](https://github.com/sannidhyaroy/Soduto) for the broader feature documentation; those services have not all been validated in this fork.
 
-The inherited application includes notifications, file sharing/SFTP, battery and
-connectivity reporting, media/volume controls, remote input, commands, and other
-KDE Connect services. See the [upstream project](https://github.com/sannidhyaroy/Soduto)
-for its broader feature documentation. Inclusion here does not mean those services
-were all fixed or validated in this clipboard/pairing work.
-
-Thanks to [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto) and the
-original [soduto/Soduto](https://github.com/soduto/Soduto). Their copyright and
-attribution remain in place. Soduto is distributed under the [GNU GPL v3](LICENSE).
+Thanks to [sannidhyaroy/Soduto](https://github.com/sannidhyaroy/Soduto) and the original [soduto/Soduto](https://github.com/soduto/Soduto). Their attribution remains in place. Licensed under the [GNU GPL v3](LICENSE).
