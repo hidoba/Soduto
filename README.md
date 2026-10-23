@@ -77,7 +77,7 @@ python3 scripts/test-keychain-tls.py
 python3 scripts/test-keychain-legacy.py
 ```
 
-See the [build workflow](.github/workflows/build.yml) for CI and packaging, and the [diagnostics guide](docs/diagnostics.md) for real-device tests.
+See the [packaging script](scripts/package-release.py) for release packaging, and the [diagnostics guide](docs/diagnostics.md) for real-device tests. Builds and checks run locally; GitHub Actions is disabled.
 
 ## Upstream work and attribution
 
