@@ -4,7 +4,9 @@ A macOS KDE Connect client focused on clipboard sync, pairing, connection recove
 and useful diagnostics. This fork combines the upstream `fix/network-reliability`
 and `feat/refine-services` branches, with additional fixes for those connection paths.
 
-**Current release: [3.2.1 (build 30)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+**Current release: [3.2.1 (build 32)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
+
+Build 33 adds image clipboard support and is undergoing release validation.
 
 [Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip)
 · [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-32-macos-universal.zip.sha256)
@@ -19,6 +21,17 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 
 ### Clipboard
 
+- **Image clipboard (build 33):** send copied macOS PNG/TIFF images as PNG and
+  receive image payloads using KDE Connect's `kdeconnect.clipboard.file` protocol,
+  already supported by KDE Connect **25.12.3**. Images take priority over alternate
+  text representations. The existing incoming/outgoing clipboard switches apply.
+  Transfers are limited to **50 MiB** and **16,777,216 decoded pixels**. Invalid,
+  incomplete, obsolete, or disconnected transfers cannot replace a newer copy.
+  Images synchronize on copy while connected; old images are not replayed on
+  reconnect. This covers image content, rather than arbitrary Finder file copies.
+  On Linux, KDE Connect exposes received images as temporary file URLs, so paste
+  behavior depends on the target application and desktop clipboard integration.
+  [KDE Connect 25.12.3 implementation](https://github.com/KDE/kdeconnect-kde/blob/v25.12.3/plugins/clipboard/clipboardplugin.cpp).
 - Keep observing local copies while disconnected, so a new offline copy is not
   replaced by older text when a peer reconnects.
 - Check for copies between timer ticks before comparing reconnect timestamps.

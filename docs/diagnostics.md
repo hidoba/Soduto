@@ -137,8 +137,21 @@ observed in the same millisecond receive increasing timestamps. This fork marks
 its ordered normal clipboard packets with `sodutoTimestamped`; ordinary KDE
 Connect packets remain live edits without depending on their sender's clock.
 Identical text never clears the pasteboard, preserving its other representations.
-On reconnect, obsolete queued clipboard sends are discarded and the current
-pasteboard is synchronized instead.
+On reconnect, obsolete queued clipboard sends are discarded and current text
+is synchronized instead. Images synchronize on copy while connected; the protocol
+has no image reconnect freshness handshake.
+
+From build 33, `clipboard.image_receiving`, `image_sent`, `image_applied`,
+`image_ignored`, `image_cancelled`, and `image_failed` events record image decisions
+under the `clipboard.` prefix. Reasons distinguish disabled directions, peers
+without image capability, invalid/oversized images, incomplete payloads, transfer
+timeouts, identical pixels, replayed generations, and clipboard/connection changes.
+Only byte counts, timestamps, peer aliases and fixed reason codes are logged;
+image data, filenames and pixel fingerprints are excluded. Incoming image payloads
+use `kdeconnect.clipboard.file` and the existing authenticated TLS payload transport.
+The limits are 50 MiB encoded and 16,777,216 pixels decoded, with a 35-second
+transfer deadline. Copies and disconnects cancel pending downloads; decoding runs
+off the main thread and checks freshness again before touching the pasteboard.
 Superseded sockets can finish existing payload uploads but cannot apply delayed
 clipboard updates or unpair the replacement session.
 
@@ -165,13 +178,19 @@ The integration harness compiles the actual `ClipboardService.swift` against a
 fake pasteboard/peer boundary. It covers offline copies, copies between timer
 ticks, non-text clipboard protection, legacy clients, three-peer relay loops,
 hub forwarding, interleaved generations, direction preferences, intentional
-repeated copies and invalid timestamps.
+repeated copies and invalid timestamps. Image scenarios cover real ImageIO
+PNG/TIFF conversion, independent per-peer streams, capability negotiation,
+direction settings, malformed/truncated/oversized data, slow-transfer cancellation,
+decode/reconnect races, timeouts, duplicate pixels, and mixed text/image relay meshes.
+A native AppKit check writes to a unique private pasteboard and verifies that
+NSImage recognizes the resulting PNG. The system's general pasteboard is untouched.
 The pairing/transport harness runs the production pairing handler, device,
 device manager, service dispatch and extracted connection event callbacks with
 fake transport, certificates and UI. It covers protocol 7/8, verification hashes,
 invalid and expired requests, explicit re-pair approval, duplicate accepts,
 missing certificates, interrupted requests, stale verification prompts, callback ordering, capability refresh
-and stale clipboard queues. Both harnesses avoid the real clipboard and keychain. The diagnostic settings
+and stale clipboard queues, including refused and disconnected image uploads.
+Both harnesses avoid the user's clipboard and keychain. The diagnostic settings
 harness uses isolated preferences and temporary journals to check default-off
 behavior, privacy, concurrent stop, persistence, menu order, UI synchronization and
 disabled actions. It does not change the actual app settings or journal.

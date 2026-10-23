@@ -138,6 +138,7 @@ public final class Connection: PairingHandlerDelegate, Equatable {
     let peerAddress = "synthetic-address"
     var verificationCode: String? { pairingHandler?.verificationCode }
     var packetReceiver: (() -> Void)?
+    var acceptSend = true
     var initializationTimeout: DispatchWorkItem?
     var diagnosticPhase = "test"
     var diagnosticFields: [String: String] { [:] }
@@ -145,6 +146,7 @@ public final class Connection: PairingHandlerDelegate, Equatable {
     func recordDiagnostic(_ event: String, level: DiagnosticEvent.Level = .info, error: Error? = nil) { events.append(event) }
     public func send(_ packet: DataPacket) -> Bool { sent.append(packet); return true }
     public func send(_ packet: DataPacket, whenCompleted: SendingCompletionHandler?) -> Bool {
+        guard acceptSend else { return false }
         sent.append(packet); whenCompleted?(true, false); return true
     }
     func reclaimUnsentPackets() -> [(dataPacket: DataPacket, completionHandler: SendingCompletionHandler?)] {
@@ -367,10 +369,13 @@ oldConnection.unsent = [
     (DataPacket(type: "kdeconnect.clipboard.connect", body: [:]), { sent, _ in
         precondition(!sent); failedClipboardCompletions += 1
     }),
+    (DataPacket(type: "kdeconnect.clipboard.file", body: [:]), { sent, _ in
+        precondition(!sent); failedClipboardCompletions += 1
+    }),
     (DataPacket(type: "synthetic.retry", body: [:]), nil)
 ]
 oldConnection.close()
-precondition(!device.isReachable && failedClipboardCompletions == 2)
+precondition(!device.isReachable && failedClipboardCompletions == 3)
 let reconnected = Connection(config: pairedConfig)
 reconnected.identity = DataPacket(type: "kdeconnect.identity", body: [
     "incomingCapabilities": ["kdeconnect.clipboard"] as NSArray,
@@ -381,6 +386,14 @@ precondition(device.isReachable && device.incomingCapabilities.contains("kdeconn
 precondition(device.outgoingCapabilities.contains("kdeconnect.clipboard.connect"))
 precondition(reconnected.sent.map { $0.type } == ["synthetic.retry"], "Stale clipboard replayed after reconnect")
 print("PASS: reconnect refreshes capabilities and never replays an obsolete queued clipboard")
+reconnected.sent = []; reconnected.acceptSend = false
+var refusedImage = false
+device.send(DataPacket(type: "kdeconnect.clipboard.file", body: [:])) { sent, _ in refusedImage = !sent }
+precondition(refusedImage)
+reconnected.acceptSend = true
+device.connectionCapacityChanged(reconnected)
+precondition(reconnected.sent.isEmpty, "Refused image stream was queued and replayed later")
+print("PASS: a refused image upload is discarded instead of queued for a later clipboard")
 
 let serviceManager = ServiceManager()
 let clipboardProbe = ClipboardProbe(); serviceManager.add(service: clipboardProbe)

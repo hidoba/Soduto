@@ -124,6 +124,7 @@
 		31F8A6142F4EECD600CA5A61 /* MDNSEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31F8A6132F4EECD600CA5A61 /* MDNSEndpointResolver.swift */; };
 		840538201ED62282003798AA /* WelcomeWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8405381F1ED62282003798AA /* WelcomeWindowController.swift */; };
 		840FC2F91DEF6AF400AC4824 /* ClipboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 840FC2F81DEF6AF400AC4824 /* ClipboardService.swift */; };
+		F1C3B29AE26843A19EC235A1 /* ClipboardImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1C3B29AE26843A19EC235A2 /* ClipboardImage.swift */; };
 		84218DC81D789BAB00C7CEBE /* DeviceListItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84218DC71D789BAB00C7CEBE /* DeviceListItemView.swift */; };
 		8421A8E71D761409008AC833 /* PreferencesWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8421A8E61D761409008AC833 /* PreferencesWindowController.swift */; };
 		842505E91ED1BD3C00AEE25F /* RemoteInputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842505E81ED1BD3C00AEE25F /* RemoteInputService.swift */; };
@@ -397,6 +398,7 @@
 		31F8A6132F4EECD600CA5A61 /* MDNSEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MDNSEndpointResolver.swift; sourceTree = "<group>"; };
 		8405381F1ED62282003798AA /* WelcomeWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WelcomeWindowController.swift; sourceTree = "<group>"; };
 		840FC2F81DEF6AF400AC4824 /* ClipboardService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ClipboardService.swift; sourceTree = "<group>"; };
+		F1C3B29AE26843A19EC235A2 /* ClipboardImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardImage.swift; sourceTree = "<group>"; };
 		841E814C1D809C360096A846 /* Soduto.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Soduto.entitlements; sourceTree = "<group>"; };
 		84218DC71D789BAB00C7CEBE /* DeviceListItemView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DeviceListItemView.swift; sourceTree = "<group>"; };
 		8421A8E61D761409008AC833 /* PreferencesWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PreferencesWindowController.swift; sourceTree = "<group>"; };
@@ -981,6 +983,7 @@
 			children = (
 				84651A711E599A3C00D17601 /* BatteryService.swift */,
 				840FC2F81DEF6AF400AC4824 /* ClipboardService.swift */,
+				F1C3B29AE26843A19EC235A2 /* ClipboardImage.swift */,
 				F8B2BB232DAFC87B00FFA284 /* ConnectivityReportService.swift */,
 				31D69A882FA7978E0086225A /* ContactsService.swift */,
 				31905C162F75F22800F259CE /* DigitizerService.swift */,
@@ -1305,6 +1308,7 @@
 				02EC48B51F229CCE00C9370F /* Configuration.swift in Sources */,
 				3116837A2FB9269A00B1AEF8 /* UpdateManager.swift in Sources */,
 				840FC2F91DEF6AF400AC4824 /* ClipboardService.swift in Sources */,
+				F1C3B29AE26843A19EC235A1 /* ClipboardImage.swift in Sources */,
 				849962131D572B1F002B893A /* Logging.m in Sources */,
 				843107731E3D32A300AE96AB /* SendMessageWindowController.swift in Sources */,
 				84FA45EA1DDF433400EF3992 /* Service.swift in Sources */,
@@ -1560,7 +1564,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -1596,7 +1600,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -1743,7 +1747,7 @@
 				CODE_SIGN_IDENTITY = "Mac Developer";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Soduto/Info.plist;
@@ -1773,7 +1777,7 @@
 				CODE_SIGN_IDENTITY = "Mac Developer";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Soduto/Info.plist;

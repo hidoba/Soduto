@@ -255,6 +255,13 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         if let connection = self.connectionForSending() {
             let accepted = connection.send(packet, whenCompleted: whenCompleted)
             if !accepted {
+                // Image streams are snapshots, and may already have been consumed
+                // by a failed upload. Never queue them for a later clipboard.
+                if packet.type == "kdeconnect.clipboard.file" {
+                    whenCompleted?(false, false)
+                    Diagnostics.record("clipboard.send_discarded", fields: ["device": Diagnostics.peer(id), "reason": "image_send_not_accepted"])
+                    return
+                }
                 let pendingPacket = PendingDataPacket(packet: packet, completionHandler: whenCompleted)
                 self.pendingPackets.insert(pendingPacket, at: 0)
             }
@@ -575,7 +582,7 @@ public class Device: ConnectionDelegate, ConnectionPairingDelegate, Pairable, Cu
         for unsentPacket in unsentPackets {
             // ClipboardService sends the current value at reconnect. Replaying
             // an older queued copy afterwards would overwrite that fresh value.
-            if unsentPacket.dataPacket.type == "kdeconnect.clipboard" || unsentPacket.dataPacket.type == "kdeconnect.clipboard.connect" {
+            if ["kdeconnect.clipboard", "kdeconnect.clipboard.connect", "kdeconnect.clipboard.file"].contains(unsentPacket.dataPacket.type) {
                 unsentPacket.completionHandler?(false, false)
                 Diagnostics.record("clipboard.send_discarded", fields: ["device": Diagnostics.peer(id), "reason": "connection_closed"])
                 continue

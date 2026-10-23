@@ -17,13 +17,25 @@ struct ClipboardReplayFilter {
 
     mutating func remember(_ content: String, timestamp: Int64) {
         let value = fingerprint(content, timestamp: timestamp)
+        remember(value)
+    }
+
+    func containsImage(_ digest: Data, timestamp: Int64) -> Bool {
+        recent.contains(Fingerprint(digest: Data([1]) + digest, timestamp: timestamp))
+    }
+
+    mutating func rememberImage(_ digest: Data, timestamp: Int64) {
+        remember(Fingerprint(digest: Data([1]) + digest, timestamp: timestamp))
+    }
+
+    private mutating func remember(_ value: Fingerprint) {
         guard !recent.contains(value) else { return }
         recent.append(value)
         if recent.count > capacity { recent.removeFirst(recent.count - capacity) }
     }
 
     private func fingerprint(_ content: String, timestamp: Int64) -> Fingerprint {
-        Fingerprint(digest: Data(SHA256.hash(data: Data(content.utf8))), timestamp: timestamp)
+        Fingerprint(digest: Data([0]) + Data(SHA256.hash(data: Data(content.utf8))), timestamp: timestamp)
     }
 }
 

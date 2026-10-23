@@ -10,6 +10,9 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 stubs = r'''
 import Foundation
+import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 public enum Service { public typealias Id = String; public typealias Capability = String }
 public struct ServiceAction { public typealias Id = Int }
 final class UserDefaults {
@@ -35,6 +38,7 @@ public enum AppDefaultsStore { public enum Preferences { public enum Services { 
 public final class Device {
     public let id: String
     public var sent: [DataPacket] = []
+    public var incomingCapabilities: Set<String> = ["kdeconnect.clipboard", "kdeconnect.clipboard.connect", "kdeconnect.clipboard.file"]
     public init(_ id: String) { self.id = id }
 }
 public final class Connection {}
@@ -42,30 +46,62 @@ public struct DataPacket {
     public typealias Body = [String: AnyObject]
     public let type: String
     public let body: Body
+    public var payload: InputStream?
+    public var payloadSize: Int64?
+    public var downloadTask: DownloadTask?
     public init(type: String, body: Body) { self.type = type; self.body = body }
 }
 final class NSPasteboard {
+    struct PasteboardType: Hashable { let value: String; static let png = Self(value: "png"); static let tiff = Self(value: "tiff") }
     static var general = NSPasteboard()
     var changeCount = 0
     var content: String? = "initial synthetic text"
+    var representations: [PasteboardType: Data] = [:]
+    var failWrite = false
+    func availableType(from types: [PasteboardType]) -> PasteboardType? { types.first { representations[$0] != nil } }
+    func data(forType type: PasteboardType) -> Data? { representations[type] }
+    @discardableResult func setData(_ data: Data, forType type: PasteboardType) -> Bool {
+        guard !failWrite else { return false }; representations[type] = data; changeCount += 1; return true
+    }
     func readObjects(forClasses classes: [AnyClass], options: [String: Any]?) -> [Any]? {
         content.map { [$0 as NSString] }
     }
-    func clearContents() { content = nil; changeCount += 1 }
+    func clearContents() { content = nil; representations = [:]; changeCount += 1 }
     @discardableResult func writeObjects(_ values: [NSString]) -> Bool {
         content = values.first as String?; changeCount += 1; return true
     }
-    func simulateCopy(_ value: String?) { content = value; changeCount += 1 }
+    func simulateCopy(_ value: String?) { content = value; representations = [:]; changeCount += 1 }
+    func simulateImage(_ data: Data, type: PasteboardType = .png, text: String? = nil) {
+        content = text; representations = [type: data]; changeCount += 1
+    }
 }
+public protocol DownloadTaskDelegate: AnyObject { func downloadTask(_ task: DownloadTask, finishedWithSuccess success: Bool) }
+public final class DownloadTask {
+    weak var delegate: DownloadTaskDelegate?
+    var stream: OutputStream?
+    var cancelled = false
+    func start(withStream stream: OutputStream) { self.stream = stream; stream.open() }
+    func cancel() { cancelled = true; stream?.close() }
+    func finish(_ data: Data, success: Bool = true) {
+        guard !cancelled, let stream else { return }
+        _ = data.withUnsafeBytes { stream.write($0.bindMemory(to: UInt8.self).baseAddress!, maxLength: data.count) }
+        stream.close()
+        delegate?.downloadTask(self, finishedWithSuccess: success)
+    }
+}
+enum ClipboardTestTimers { static var timers: [Timer] = [] }
 extension Timer {
     static func compatScheduledTimer(withTimeInterval interval: TimeInterval, repeats: Bool,
                                      block: @escaping (Timer) -> Void) -> Timer {
-        Timer(timeInterval: interval, repeats: repeats, block: block)
+        let timer = Timer(timeInterval: interval, repeats: repeats, block: block)
+        ClipboardTestTimers.timers.append(timer)
+        return timer
     }
 }
 enum Diagnostics {
+    static var events: [(String, [String: String])] = []
     static func peer(_ id: String?) -> String { id ?? "unknown" }
-    static func record(_ event: String, level: DiagnosticEvent.Level = .info, fields: [String: String] = [:]) {}
+    static func record(_ event: String, level: DiagnosticEvent.Level = .info, fields: [String: String] = [:]) { events.append((event, fields)) }
 }
 '''
 tests = r'''
@@ -227,11 +263,16 @@ with tempfile.TemporaryDirectory(prefix="soduto-clipboard-tests-") as directory:
     directory = Path(directory)
     source = root / "Soduto/Services/ClipboardService.swift"
     combined = directory / "main.swift"
-    combined.write_text(stubs + source.read_text().replace("import Cocoa", "") + tests)
+    image_tests = (root / "Tests/ClipboardImages/scenarios.swift").read_text()
+    test_extension = "extension ClipboardService { func pollForTest() { checkPasteboard() } }"
+    image_extension = "extension ClipboardService { func finishImagesForTest() { imageQueue.waitUntilAllOperationsAreFinished(); RunLoop.main.run(until: Date().addingTimeInterval(0.01)) } }"
+    combined.write_text(stubs + source.read_text().replace("import Cocoa", "") + test_extension + "\n" + image_extension +
+                        "\nfunc textScenarios() {\n" + tests.replace(test_extension, "") + "\n}\ntextScenarios()\n" + image_tests)
     executable = directory / "clipboard-tests"
     subprocess.run([
         "swiftc", str(root / "Soduto/Core/Diagnostics/DiagnosticEvent.swift"),
         str(root / "Soduto/Core/Diagnostics/ClipboardSyncState.swift"),
+        str(root / "Soduto/Services/ClipboardImage.swift"),
         str(combined), "-o", str(executable),
     ], check=True)
     subprocess.run([str(executable)], check=True)
