@@ -3,7 +3,7 @@
 This fork combines `fix/network-reliability` (`ca7db3a`) and
 `feat/refine-services` (`afcc62d`) from sannidhyaroy/Soduto. It adds recovery
 fixes and a persistent, bounded diagnostic journal. The app uses bundle ID
-`com.hidoba.Soduto` and version 3.2.1 (30). A first install pairs as a new Mac device;
+`com.hidoba.Soduto` and version 3.2.1 (31). A first install pairs as a new Mac device;
 updates retain the existing identity and pairings.
 
 The menu bar icon has a small badge over its upper-right corner showing the number
@@ -67,9 +67,12 @@ upstream logging statements can contain personal information in debug builds.
 
 ## Keychain access prompts
 
-Build 30 removes repeated private-key exports from every TLS handshake, including
-payload transfers. It reuses the existing identity and performs signing inside
-Keychain. New keys display **Soduto Device Identity**. Legacy keys can retain the
+Build 31 avoids the implicit private-key exports that still occurred in build 30
+for legacy identities. Apple's high-level RSA signing and algorithm-support APIs
+read private-key attributes, internally attempting export. TLS now uses only the
+public certificate's metadata, encodes its signature padding and requests raw RSA
+signing inside Keychain. Control and payload transfers share that path. Existing
+identities are retained. New keys display **Soduto Device Identity**. Legacy keys can retain the
 `<key>` display name; this update does not replace them or loosen their access controls.
 Because these releases lack a stable developer signature, macOS may request normal
 Keychain access after an app replacement. If access is denied,

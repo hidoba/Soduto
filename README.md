@@ -6,8 +6,8 @@ and `feat/refine-services` branches, with additional fixes for those connection 
 
 **Current release: [3.2.1 (build 30)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1)**
 
-[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-30-macos-universal.zip)
-· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-30-macos-universal.zip.sha256)
+[Download the macOS app](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-31-macos-universal.zip)
+· [SHA-256 checksum](https://github.com/hidoba/Soduto/releases/download/v3.2.1/Soduto-3.2.1-31-macos-universal.zip.sha256)
 · [Release notes](docs/releases/3.2.1.md)
 
 This is an **unsigned, unnotarized development release** for **macOS 14 or newer**,
@@ -50,12 +50,16 @@ sleep/wake, and Wi-Fi recovery testing remains pending.
 
 ### Keychain authorization
 
-Build 30 fixes repeated **“export key \<key\>”** password prompts introduced by the
-newer networking stack. All control and payload TLS connections now sign through
-macOS Keychain instead of exporting the private key on every connection. TLS 1.2
-and 1.3 use ephemeral key exchange. New identities receive the readable Keychain
-name **Soduto Device Identity**. New certificates are generated in memory before
-the key is stored as nonexportable. Existing stored keys are never exported.
+Build 31 fixes the **“export key \<key\>”** loop that remained in build 30 for
+legacy identities. A runtime trace showed that Apple's high-level RSA signing and
+algorithm checks internally read private-key attributes, which attempt to export
+older keys. New nonexportable keys in the previous tests concealed this behavior.
+
+TLS now obtains the key size from the public certificate, encodes RSA-PSS or
+PKCS#1 signatures, and uses Keychain's raw RSA signing operation. It never reads
+private-key attributes or exports a stored private key. TLS 1.2 and 1.3 retain
+ephemeral key exchange. New identities receive the readable Keychain name
+**Soduto Device Identity** and are stored as nonexportable.
 
 Existing certificates, keys and pairings are retained. Their old Keychain display
 name can remain `<key>`; updating does not replace the identity or rewrite its
@@ -121,7 +125,7 @@ locations, privacy details, and real-device test checklist.
 
 ## Validation and compatibility
 
-**63 automated checks pass**, alongside a complete Release build of the app and
+**69 automated checks pass**, alongside a complete Release build of the app and
 extensions on macOS 26:
 
 | Checks | Count | Coverage |
@@ -130,15 +134,21 @@ extensions on macOS 26:
 | Clipboard integration scenarios | 13 | Offline copies, reconnect freshness, legacy clients, direction settings, and multi-peer relays |
 | Pairing/transport integration scenarios | 16 | Protocol 7/8, verification hashes, certificates, interrupted requests, dispatch, and stale prompts |
 | Diagnostic settings scenarios | 6 | Default-off behavior, persistence, concurrent stop, menu placement, UI synchronization, and disabled controls |
-| Keychain/TLS regression tests | 10 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, reconnects, denial and temporary errors, nonexportable keys and isolated identity storage |
-| **Total** | **63** | |
+| Keychain/TLS regression tests | 16 | Real TLS 1.2/1.3 mutual authentication, six signing algorithms, legacy export-protected and nonexportable keys, 4096-bit identities, reconnects, denial and temporary errors |
+| **Total** | **69** | |
 
-[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39869897996)
-· [Built source revision: `493ca0c`](https://github.com/hidoba/Soduto/commit/493ca0cf20a7dde3a2c4038d38cec28006006615)
+[Verified build and checks](https://github.com/hidoba/Soduto/actions/runs/39876264905)
+· [Built source revision: `7ac72bc`](https://github.com/hidoba/Soduto/commit/7ac72bc68c96410895e2ffa508a053b152c21850)
 
-The downloaded archive's checksum, universal executable, version **3.2.1 (30)**,
+The downloaded archive's checksum, universal executable, version **3.2.1 (31)**,
 fork bundle ID, source revision, and update settings were verified. The menu badge
 was also compiled and rendered in light and dark appearances.
+
+An additional native regression uses a legacy export-protected key in a temporary
+keychain and a separate consumer process: **600 signatures** across all six TLS
+schemes are verified with Apple's public-key verifier. On the affected Mac, the
+old API was sampled blocked in private-key export, while the replacement completed
+without export approval. No login Keychain permissions were changed.
 
 Keychain/TLS tests use real Security and NIOSSL APIs with memory-only keys,
 isolated temporary keychains and loopback sockets. The clipboard/pairing scenarios
@@ -155,11 +165,11 @@ shared connection lifecycle.
 ## Download and install
 
 1. Download the ZIP and matching `.sha256` file from
-   [release 3.2.1 (30)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
+   [release 3.2.1 (31)](https://github.com/hidoba/Soduto/releases/tag/v3.2.1).
 2. In the directory containing both downloads, verify the archive:
 
    ```sh
-   shasum -a 256 -c Soduto-3.2.1-30-macos-universal.zip.sha256
+   shasum -a 256 -c Soduto-3.2.1-31-macos-universal.zip.sha256
    ```
 
 3. Extract the ZIP and move `Soduto.app` into Applications. This prebuilt app is
@@ -201,7 +211,15 @@ python3 scripts/test-clipboard-service.py
 python3 scripts/test-pairing-transport.py
 python3 scripts/test-diagnostics-settings.py
 python3 scripts/test-keychain-tls.py
+python3 scripts/test-keychain-legacy.py
 ```
+
+To reproduce the old export prompt with a disposable synthetic key on a Mac with
+a logged-in desktop session, run `python3 scripts/test-keychain-legacy.py --prove-old-prompt`.
+The runner captures the blocked stack, terminates the control process and deletes
+only its temporary keychain. No password entry is needed. This optional control
+intentionally displays an approval dialog; the fixed signing path must finish
+without it.
 
 The [build workflow](.github/workflows/build.yml) contains the complete unsigned
 Release build and packaging commands. The historical certificate tests are not
