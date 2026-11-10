@@ -2,13 +2,13 @@
   "repository": "hidoba/Soduto",
   "branch": "codex/reliability-diagnostics",
   "commit": {
-    "sha": "bdd994b01005c004ccb1da9fe93ff0126aab7083",
-    "date": "2026-10-23T19:10:40Z"
+    "sha": "2fa63510b39c5ef2e3686c9eb129f5129c8888d4",
+    "date": "2026-11-10T02:09:52Z"
   },
   "release": {
-    "tag": "v3.2.1-37",
-    "download": "https://github.com/hidoba/Soduto/releases/download/v3.2.1-37/Soduto-3.2.1-37-macos-universal.zip",
-    "buildUrl": "https://github.com/hidoba/Soduto/actions/runs/40009349269",
+    "tag": "v3.2.1-38",
+    "download": "https://github.com/hidoba/Soduto/releases/download/v3.2.1-38/Soduto-3.2.1-38-macos-universal.zip",
+    "buildUrl": "https://github.com/hidoba/Soduto/actions/runs/42742609302",
     "publishedByActions": true
   }
 }
