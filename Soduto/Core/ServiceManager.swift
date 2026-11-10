@@ -10,6 +10,15 @@ import Foundation
 
 public class ServiceManager: CapabilitiesDataSource {
     
+    // MARK: Properties
+    
+    private let userDefaults: UserDefaults
+    
+    public init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+    
+    
     // MARK: Public properties
     
     /// Combined incoming capabilities of all services
@@ -53,13 +62,17 @@ public class ServiceManager: CapabilitiesDataSource {
         }
     }
     
-    /// Add a new service instance. This should be done on application start before any device connections are established
+    /// Add a new service instance. This should be done on application start before any device connections are established.
+    /// Immediately calls `configure(with:)` on the service so it has access to the shared `UserDefaults` before
+    /// any device connects and capability negotiation begins
     public func add(service: Service) {
+        service.configure(with: userDefaults)
         services.append(service)
     }
     
     /// Setup services for provided device. This is done when a new device becomes ready (accessible and paired)
     public func setup(for device: Device) {
+        Diagnostics.record("services.setup", fields: ["device": Diagnostics.peer(device.id), "count": String(services.count)])
         for service in self.services {
             service.setup(for: device)
         }
@@ -67,6 +80,7 @@ public class ServiceManager: CapabilitiesDataSource {
     
     /// Cleanup services for provided device. This is done when device becomes unavailable or not unpaired
     public func cleanup(for device: Device) {
+        Diagnostics.record("services.cleanup", fields: ["device": Diagnostics.peer(device.id), "count": String(services.count)])
         for service in self.services {
             service.cleanup(for: device)
         }

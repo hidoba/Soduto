@@ -26,13 +26,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
     let deviceManager: DeviceManager
     let serviceManager = ServiceManager()
     private(set) var userNotificationManager: UserNotificationManager!
-    let updaterController: SPUStandardUpdaterController
+    let updateManager: UpdateManager
     private var heartbeatTimer: Timer?
     
     override init() {
         self.connectionProvider = ConnectionProvider(config: config)
         self.deviceManager = DeviceManager(config: config, serviceManager: self.serviceManager)
-        self.updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        self.updateManager = UpdateManager()
         
         super.init()
         
@@ -43,6 +43,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
     // MARK: NSApplicationDelegate
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        Diagnostics.record("app.started", fields: [
+            "app_version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString
+        ])
         self.userNotificationManager = UserNotificationManager(config: self.config, serviceManager: self.serviceManager, deviceManager: self.deviceManager)
         self.config.capabilitiesDataSource = self.serviceManager
         self.connectionProvider.delegate = self.deviceManager
@@ -51,30 +56,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
         self.statusBarMenuController.config = self.config
         self.deviceManager.delegate = self
         
-        self.checkForUpdatesMenuItem.target = updaterController
-        self.checkForUpdatesMenuItem.action = #selector(SPUStandardUpdaterController.checkForUpdates(_:))
+        if UpdateManager.isForkBuild {
+            self.checkForUpdatesMenuItem.title = "Fork Releases on GitHub…"
+            self.checkForUpdatesMenuItem.target = updateManager
+            self.checkForUpdatesMenuItem.action = #selector(UpdateManager.openForkReleases(_:))
+        } else {
+            self.checkForUpdatesMenuItem.target = updateManager.updaterController
+            self.checkForUpdatesMenuItem.action = #selector(SPUStandardUpdaterController.checkForUpdates(_:))
+        }
         
         self.serviceManager.add(service: NotificationsService())
         self.serviceManager.add(service: ClipboardService())
         self.serviceManager.add(service: SftpService())
         self.serviceManager.add(service: ShareService())
         self.serviceManager.add(service: TelephonyService())
+        self.serviceManager.add(service: ContactsService())
+        self.serviceManager.add(service: SMSService())
         self.serviceManager.add(service: PingService())
         self.serviceManager.add(service: BatteryService())
+        self.serviceManager.add(service: SystemVolumeService())
         self.serviceManager.add(service: ConnectivityReportService())
-        self.serviceManager.add(service: FindMyPhoneService())
-        self.serviceManager.add(service: RemoteKeyboardService())
+        self.serviceManager.add(service: FindMyService())
+        self.serviceManager.add(service: PresenterService())
+        self.serviceManager.add(service: RemoteInputService())
+        self.serviceManager.add(service: DigitizerService())
+        self.serviceManager.add(service: RemoteControlService())
+        self.serviceManager.add(service: LockService())
+        self.serviceManager.add(service: WebcamService())
         self.serviceManager.add(service: RunCommandService())
-        self.serviceManager.add(service: MacToRemoteInputService())
-        self.serviceManager.add(service: MPRISService())
+        self.serviceManager.add(service: MediaPlayerService())
+        self.statusBarMenuController.startServiceObservers()
         
         self.updateValidDevices()
         self.startHeartbeat()
-        let notificationName = "com.soduto.share.handoff" as CFString
+        let notificationName = AppDefaultsStore.DarwinNotifications.shareHandoff as CFString
         let notificationCenter = CFNotificationCenterGetDarwinNotifyCenter()
         registerShareExtensionObserver(notificationCenter, notificationName)
         
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(wakeUpListener(_:)), name: NSWorkspace.didWakeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleepListener(_:)), name: NSWorkspace.willSleepNotification, object: nil)
+        self.statusBarMenuController.installDiagnosticsMenu(Diagnostics.shared.makeMenu(
+            snapshot: { [weak self] in self?.diagnosticSnapshot() ?? [:] },
+            recover: { [weak self] in
+                KeychainTLSPrivateKey.resetAuthorizationFailures()
+                self?.connectionProvider.restart(reason: "user")
+            }
+        ))
         
         self.connectionProvider.start()
         
@@ -82,6 +109,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {
+        Diagnostics.record("app.stopping")
+        Diagnostics.shared.flush()
         heartbeatTimer?.invalidate()
         AppDefaultsStore.ShareExtension.appLastHeartbeat = 0
         AppDefaultsStore.ShareExtension.reachableDevices = []
@@ -133,8 +162,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
     // MARK: WakeUP Function
     
     @objc private func wakeUpListener(_ aNotification: Notification) {
-        self.connectionProvider.restart()
+        Diagnostics.record("app.woke")
+        self.connectionProvider.restart(reason: "wake")
         self.updateValidDevices()
+    }
+
+    @objc private func willSleepListener(_ notification: Notification) {
+        Diagnostics.record("app.will_sleep")
+        Diagnostics.shared.flush()
+    }
+
+    private func diagnosticSnapshot() -> [String: Any] {
+        ["app_version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+         "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+         "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+         "network": connectionProvider.diagnosticSnapshot(), "devices": deviceManager.diagnosticSnapshot(),
+         "services": serviceManager.services.map { service in
+             ["service": String(describing: type(of: service)), "incoming": service.incomingCapabilities.sorted(),
+              "outgoing": service.outgoingCapabilities.sorted()] as [String: Any]
+         }]
     }
     
     // MARK: Extension Support
@@ -143,6 +189,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
         AppDefaultsStore.ShareExtension.appLastHeartbeat = Date().timeIntervalSince1970
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             AppDefaultsStore.ShareExtension.appLastHeartbeat = Date().timeIntervalSince1970
+            let app = AppDelegate.shared()
+            Diagnostics.record("app.health", fields: ["reachable": String(app.validDevices.count),
+                                                     "unavailable": String(app.deviceManager.unavailableDevices.count)])
         }
     }
     
@@ -195,29 +244,61 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
             return
         }
         
-        // Process file/URL bookmarks
+        // Pass 1: resolve all bookmarks into URLs without sending yet
+        // This lets us pre-count file uploads and register the batch BEFORE sending,
+        // so each packet can be stamped with `numberOfFiles` (protocol requirement)
+        var resolvedUrls: [URL] = []
         var failedCount = 0
-        var fileUploadCount = 0
         for data in bookmarks {
             do {
                 var isStale = false
                 let url = try URL(resolvingBookmarkData: data, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &isStale)
-                switch shareService.shareFromExtension(url: url, to: device) {
-                case .fileUploadQueued:    fileUploadCount += 1
-                case .sentWithoutPayload:  break
-                case .skipped:             failedCount += 1
-                }
+                resolvedUrls.append(url)
             } catch {
                 failedCount += 1
                 Logger.general.error("Failed to resolve bookmark: \(error, privacy: .public)")
             }
         }
         
+        // Pre-count valid file uploads (non-directory file: URLs that ShareService will queue)
+        let fileUrls = resolvedUrls.filter { url -> Bool in
+            var isDirectory: ObjCBool = false
+            return url.isFileURL
+                && FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                && !isDirectory.boolValue
+        }
+        let estimatedTotalBytes = fileUrls.reduce(Int64(0)) { sum, url in
+            sum + ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0)
+        }
+        
+        // Register batch BEFORE sending so shareFromExtension can stamp numberOfFiles on packets
+        //
+        // Pre-count vs actual-queue mismatch: our filter (fileExists + !isDirectory) mirrors the
+        // checks inside dataPacket(forFileUrl:), with one exception: InputStream(url:) could
+        // theoretically return nil for a file that exists. If that happened, the batch would be
+        // registered for N but only (N - 1) packets sent, leaving isDone unreachable
+        // In practice this is not a real risk: the Share extension uses Security-scoped bookmarks,
+        // and a successful bookmark resolution guarantees OS-level read access, so InputStream
+        // creation will always succeed for any URL that passes our filter
+        if !fileUrls.isEmpty {
+            shareService.beginTrackingExtensionUploads(deviceId: deviceId, fileCount: fileUrls.count, totalBytes: estimatedTotalBytes)
+        }
+        
         if failedCount > 0 {
             let message = failedCount == bookmarks.count
-            ? "Soduto Share doesn't have permissions to read files in this directory. Drag the file to the menu bar icon to share!"
-            : "\(failedCount) of \(bookmarks.count) items could not be shared."
+                ? "Soduto Share doesn't have permissions to read files in this directory. Drag the file to the menu bar icon to share!"
+                : "\(failedCount) of \(bookmarks.count) items could not be shared."
             UserNotificationHelper.show(title: "Soduto Share", subtitle: "Oops! We got lost!", body: message, sound: true, id: "FileAccessDenied")
+        }
+        
+        // Pass 2: send all resolved URLs
+        var fileUploadCount = 0
+        for url in resolvedUrls {
+            switch shareService.shareFromExtension(url: url, to: device) {
+            case .fileUploadQueued:    fileUploadCount += 1
+            case .sentWithoutPayload:  break
+            case .skipped:             failedCount += 1
+            }
         }
         
         // Process shared texts
@@ -225,22 +306,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, DeviceManagerDelegate {
             shareService.shareFromExtension(text: text, to: device)
         }
         
-        /// Report transfer status back to the extension.
-        /// File uploads (with payloads) are tracked by ShareService — it reports the real completion status via Darwin notification when all uploads finish.
-        /// Non-file transfers (URLs, text) complete immediately.
-        if fileUploadCount > 0 {
-            shareService.beginTrackingExtensionUploads(deviceId: deviceId, fileCount: fileUploadCount)
-            // Don't report status yet — ShareService will when uploads actually complete
-        } else if failedCount == bookmarks.count && !bookmarks.isEmpty && texts.isEmpty {
-            // Everything failed, nothing was sent
-            ShareService.reportExtensionTransferStatus(deviceId: deviceId, status: "failed")
-        } else {
-            // Only URLs/texts were shared (no file payloads) — they complete immediately
-            ShareService.reportExtensionTransferStatus(deviceId: deviceId, status: "success")
+        // File uploads are tracked by ShareService,it reports the real completion status via
+        // Darwin notification when all uploads finish. Non-file transfers complete immediately
+        if fileUploadCount == 0 {
+            if failedCount == bookmarks.count && !bookmarks.isEmpty && texts.isEmpty {
+                // Everything failed, nothing was sent
+                ShareService.reportExtensionTransferStatus(deviceId: deviceId, status: "failed")
+            } else {
+                // Only URLs/texts were shared (no file payloads) — they complete immediately
+                ShareService.reportExtensionTransferStatus(deviceId: deviceId, status: "success")
+            }
         }
         
-        // Clear consumed data (NOT transferStatuses — extension needs them)
-        // Each device reads only its own transferStatus entry by ID. Old entries are inert and cleared on extension deinit
+        // Clear consumed data (NOT transferStatuses, extension needs them)
+        // Each device reads only its own transferStatus entry by ID & old entries are inert and cleared on extension deinit
         AppDefaultsStore.ShareExtension.fileBookmarkData = nil
         AppDefaultsStore.ShareExtension.sharedTexts = nil
         AppDefaultsStore.ShareExtension.selectedDevice = nil

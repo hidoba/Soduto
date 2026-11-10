@@ -164,51 +164,6 @@ final class STARTTLSHandler: ChannelDuplexHandler, RemovableChannelHandler {
     }
     
     private func createTLSConfiguration(role: TLSRole) throws -> TLSConfiguration {
-        // Extract certificate and private key from SecIdentity
-        var certificate: SecCertificate?
-        let certStatus = SecIdentityCopyCertificate(identity, &certificate)
-        guard certStatus == errSecSuccess, let cert = certificate else {
-            throw NIOSSLError.failedToLoadCertificate
-        }
-        
-        var privateKey: SecKey?
-        let keyStatus = SecIdentityCopyPrivateKey(identity, &privateKey)
-        guard keyStatus == errSecSuccess, let key = privateKey else {
-            throw NIOSSLError.failedToLoadPrivateKey
-        }
-        
-        // Convert to NIOSSLCertificate and NIOSSLPrivateKey
-        let certData = SecCertificateCopyData(cert) as Data
-        let sslCert = try NIOSSLCertificate(bytes: Array(certData), format: .der)
-        
-        // For the private key, we need to export it to data
-        // This requires the key to be exportable
-        var error: Unmanaged<CFError>?
-        guard let keyData = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
-            throw NIOSSLError.failedToLoadPrivateKey
-        }
-        
-        let sslKey = try NIOSSLPrivateKey(bytes: Array(keyData), format: .der)
-        
-        var config: TLSConfiguration
-        switch role {
-        case .server:
-            config = TLSConfiguration.makeServerConfiguration(
-                certificateChain: [.certificate(sslCert)],
-                privateKey: .privateKey(sslKey)
-            )
-            // Require client certificate (mutual TLS)
-            config.certificateVerification = .noHostnameVerification
-        case .client:
-            config = TLSConfiguration.makeClientConfiguration()
-            config.certificateChain = [.certificate(sslCert)]
-            config.privateKey = .privateKey(sslKey)
-            config.certificateVerification = .noHostnameVerification
-        }
-        
-        // KDE Connect uses TLS 1.2+
-        config.minimumTLSVersion = .tlsv12
-        
-        return config
+        try KeychainTLSIdentity.configuration(for: identity, server: role == .server)
     }
 }

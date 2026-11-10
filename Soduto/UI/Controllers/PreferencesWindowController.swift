@@ -11,6 +11,12 @@ import Cocoa
 
 public class PreferencesWindowController: NSWindowController {
     
+    private var localKeyMonitor: Any?
+    
+    deinit {
+        if let monitor = localKeyMonitor { NSEvent.removeMonitor(monitor) }
+    }
+    
     var deviceDataSource: DeviceDataSource? {
         didSet { self.preferencesTabViewController?.deviceDataSource = self.deviceDataSource }
     }
@@ -34,6 +40,13 @@ public class PreferencesWindowController: NSWindowController {
     
     public override func windowDidLoad() {
         super.windowDidLoad()
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.window,
+                  event.modifierFlags.contains(.command),
+                  event.charactersIgnoringModifiers == "w" else { return event }
+            self.window?.performClose(nil)
+            return nil
+        }
         
         let screenRect = NSScreen.main?.frame ?? NSRect.zero
         self.window?.setFrame(NSRect(x: screenRect.width / 2 - 340, y: screenRect.height / 2 - 200, width: 680, height: 400), display: false)
@@ -93,6 +106,10 @@ class PreferencesTabViewController: NSTabViewController {
     
     public override func viewDidLoad() {
         super.viewDidLoad()
+        let diagnosticsTab = NSTabViewItem(viewController: DiagnosticsPreferencesViewController())
+        diagnosticsTab.label = "Diagnostics"
+        diagnosticsTab.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: nil)
+        addTabViewItem(diagnosticsTab)
         updateDeviceDataSourceForSelectedTab()
         updateConfigForSelectedTab()
     }
@@ -114,5 +131,64 @@ class PreferencesTabViewController: NSTabViewController {
         if let controller = selectedTabViewItem.viewController as? DevicePreferencesViewController {
             controller.config = self.config
         }
+    }
+}
+
+/// Shares the same setting as the Diagnostics menu; logging starts disabled.
+final class DiagnosticsPreferencesViewController: NSViewController {
+    private let diagnostics: Diagnostics
+    private var writeLogsCheckbox: NSButton!
+
+    init(diagnostics: Diagnostics = .shared) {
+        self.diagnostics = diagnostics
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("Use init(diagnostics:)") }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    override func loadView() {
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 320))
+        let heading = NSTextField(labelWithString: "Diagnostics")
+        heading.font = .systemFont(ofSize: 17, weight: .semibold)
+        writeLogsCheckbox = NSButton(checkboxWithTitle: "Write diagnostic logs", target: self, action: #selector(toggleLogWriting(_:)))
+        let explanation = NSTextField(wrappingLabelWithString: "Record connection, pairing and clipboard events to help troubleshoot problems. Off by default. Clipboard text, messages, file contents and keys are never included.")
+        explanation.textColor = .secondaryLabelColor
+        let retention = NSTextField(wrappingLabelWithString: "Logs stay on this Mac and use up to 20 MiB. Turning logging off stops writing and keeps existing logs. Enable it again to export them from the Diagnostics menu.")
+        retention.textColor = .secondaryLabelColor
+        for control in [heading, writeLogsCheckbox!, explanation, retention] {
+            control.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(control)
+        }
+        NSLayoutConstraint.activate([
+            heading.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 32),
+            heading.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
+            writeLogsCheckbox.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            writeLogsCheckbox.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 20),
+            explanation.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
+            explanation.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -32),
+            explanation.topAnchor.constraint(equalTo: writeLogsCheckbox.bottomAnchor, constant: 12),
+            retention.leadingAnchor.constraint(equalTo: explanation.leadingAnchor),
+            retention.trailingAnchor.constraint(equalTo: explanation.trailingAnchor),
+            retention.topAnchor.constraint(equalTo: explanation.bottomAnchor, constant: 16)
+        ])
+        view = content
+        syncLogWriting()
+        NotificationCenter.default.addObserver(self, selector: #selector(syncLogWriting),
+                                              name: Diagnostics.loggingSettingDidChange, object: diagnostics)
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        syncLogWriting()
+    }
+
+    @objc private func syncLogWriting() {
+        writeLogsCheckbox.state = diagnostics.writeLogsEnabled ? .on : .off
+    }
+
+    @objc private func toggleLogWriting(_ sender: NSButton) {
+        diagnostics.writeLogsEnabled = sender.state == .on
     }
 }

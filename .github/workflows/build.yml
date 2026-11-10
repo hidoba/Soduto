@@ -1,0 +1,157 @@
+name: Build, test, and publish
+
+# Run on request only: do not build the same commit for both a push and a PR.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: macOS runner (Intel avoids Apple Silicon capacity queues)
+        type: choice
+        default: macos-26
+        options:
+          - macos-26-intel
+          - macos-26
+      publish_release:
+        description: Publish a new release after all checks pass (bump the build number first)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  keychain-tls:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare test logs
+        run: mkdir -p build
+      - name: Keychain identity and real mutual TLS regression tests
+        run: python3 scripts/test-keychain-tls.py 2>&1 | tee build/keychain-tls.log
+      - name: Legacy export-protected key across separate processes
+        run: python3 scripts/test-keychain-legacy.py 2>&1 | tee build/keychain-legacy.log
+      - name: Upload Keychain test logs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: soduto-keychain-logs-${{ github.sha }}
+          path: build/*.log
+          if-no-files-found: error
+          retention-days: 14
+  macos:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare build logs
+        run: mkdir -p build
+      - name: Release pipeline regression tests
+        run: python3 scripts/test-release.py 2>&1 | tee build/release-tests.log
+      - name: Reliability regression tests
+        run: swift test 2>&1 | tee build/reliability.log
+      - name: Clipboard service integration regression tests
+        run: python3 scripts/test-clipboard-service.py 2>&1 | tee build/clipboard.log
+      - name: Pairing and transport integration regression tests
+        run: python3 scripts/test-pairing-transport.py 2>&1 | tee build/pairing-transport.log
+      - name: Diagnostic settings and logging regression tests
+        run: python3 scripts/test-diagnostics-settings.py 2>&1 | tee build/diagnostics-settings.log
+      - name: Build application and extensions
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -project Soduto.xcodeproj -scheme Soduto -configuration Release \
+            -destination 'generic/platform=macOS' -derivedDataPath build/DerivedData \
+            ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \
+            BUNDLE_ID=com.hidoba.Soduto SODUTO_SOURCE_REVISION="$GITHUB_SHA" \
+            build 2>&1 | tee build/xcodebuild.log
+      - name: Seal app bundle and package development build
+        run: |
+          python3 scripts/package-release.py \
+            build/DerivedData/Build/Products/Release/Soduto.app \
+            build/Soduto-development.zip --packaging-revision "$GITHUB_SHA" \
+            2>&1 | tee build/packaging.log
+      - name: Upload build logs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: soduto-build-logs-${{ github.sha }}
+          path: build/*.log
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload packaged app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soduto-build-${{ github.sha }}
+          path: |
+            build/Soduto-development.zip
+            build/Soduto-development.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Prepare release assets without repackaging
+        if: inputs.publish_release
+        run: |
+          python3 scripts/release.py prepare \
+            --app build/DerivedData/Build/Products/Release/Soduto.app \
+            --archive build/Soduto-development.zip \
+            --notes docs/releases/3.2.1.md --output build/release
+      - name: Attest the release ZIP and build manifest
+        if: inputs.publish_release
+        id: attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            build/release/*-macos-universal.zip
+            build/release/build-info.json
+      - name: Preserve signed build attestation
+        if: inputs.publish_release
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attestation.outputs.bundle-path }}
+        run: cp "$ATTESTATION_BUNDLE" build/release/release-attestation.sigstore.json
+      - name: Upload attested release assets
+        if: inputs.publish_release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soduto-release-${{ github.sha }}
+          path: build/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+  release:
+    name: Publish verified release
+    if: inputs.publish_release
+    needs: [macos, keychain-tls]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: soduto-release-${{ github.sha }}
+          path: release
+      - name: Verify provenance and publish the exact CI assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release.py publish --directory release

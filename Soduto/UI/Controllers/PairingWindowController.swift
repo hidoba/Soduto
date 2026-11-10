@@ -128,7 +128,11 @@ class PairingWindowController: NSWindowController {
     
     private static func show(for device: Device, state: PairingState) {
         // Close existing window for this device if any
-        activeWindows[device.id]?.close()
+        if let existing = activeWindows[device.id] {
+            // Replacing a prompt must not reject the request represented by it.
+            existing.suppressAutoDeclineOnClose = true
+            existing.close()
+        }
         
         // Create and show new window
         let controller = PairingWindowController(device: device, state: state)
@@ -292,7 +296,9 @@ class PairingWindowController: NSWindowController {
             }
         }
         stateCancellable?.cancel()
-        PairingWindowController.activeWindows.removeValue(forKey: deviceId)
+        if PairingWindowController.activeWindows[deviceId] === self {
+            PairingWindowController.activeWindows.removeValue(forKey: deviceId)
+        }
         super.close()
     }
     
@@ -383,7 +389,9 @@ extension PairingWindowController: NSWindowDelegate {
             viewModel.device?.declinePairing()
         }
 
-        PairingWindowController.activeWindows.removeValue(forKey: deviceId)
+        if PairingWindowController.activeWindows[deviceId] === self {
+            PairingWindowController.activeWindows.removeValue(forKey: deviceId)
+        }
     }
 
     // Allow closing via keyboard shortcuts even without close button

@@ -171,7 +171,7 @@ public class DeviceConfiguration: NSObject {
     
     class func defaultCertificateName(for deviceId: String) -> String {
         let safeDeviceId = deviceId.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? "undefined-\(Configuration.generateDeviceId())"
-        return "Soduto Client (\(safeDeviceId))"
+        return "\(Bundle.main.bundleIdentifier ?? "com.hidoba.Soduto").peer.\(safeDeviceId)"
     }
     
     class func configKey(for deviceId: String) -> String {
@@ -248,7 +248,6 @@ public class Configuration: ConnectionConfiguration, DeviceManagerConfiguration,
         case hostDeviceId = "hostDeviceId"
         case hostCertificateName = "hostCertificateName"
         case launchOnLogin = "launchOnLogin"
-        case runCommands = "runCommands"
     }
     
     public weak var capabilitiesDataSource: CapabilitiesDataSource? = nil
@@ -266,7 +265,12 @@ public class Configuration: ConnectionConfiguration, DeviceManagerConfiguration,
             self.userDefaults.set(Configuration.generateDeviceId(), forKey: Property.hostDeviceId.rawValue)
         }
         if self.userDefaults.string(forKey: Property.hostCertificateName.rawValue) == nil {
-            self.userDefaults.set("Soduto Host", forKey: Property.hostCertificateName.rawValue)
+            // Keychain preferred-identity names are global, unlike UserDefaults.
+            // A fork must not reuse upstream's "Soduto Host" certificate with a
+            // different deviceId/Common Name, or delete upstream's pairing pins.
+            let namespace = Bundle.main.bundleIdentifier ?? "com.hidoba.Soduto"
+            let deviceID = self.userDefaults.string(forKey: Property.hostDeviceId.rawValue)!
+            self.userDefaults.set("\(namespace).host.\(deviceID)", forKey: Property.hostCertificateName.rawValue)
         }
     }
     
@@ -367,35 +371,12 @@ public class Configuration: ConnectionConfiguration, DeviceManagerConfiguration,
                     }
                 }
             } else {
-                if SMLoginItemSetEnabled("com.soduto.SodutoLauncher" as CFString, newValue) {
+                if SMLoginItemSetEnabled((Bundle.main.bundleIdentifier! + "Launcher") as CFString, newValue) {
                     self.userDefaults.set(newValue, forKey: Property.launchOnLogin.rawValue)
                 }
             }
         }
     }
-    
-    public var runCommands: [RunCommandService.Command] {
-        get {
-            if let data = self.userDefaults.data(forKey: Property.runCommands.rawValue) {
-                do {
-                    return try JSONDecoder().decode([RunCommandService.Command].self, from: data)
-                } catch {
-                    Logger.config.error("Failed to decode run commands: \(error, privacy: .public)")
-                    return []
-                }
-            }
-            return []
-        }
-        set {
-            do {
-                let data = try JSONEncoder().encode(newValue)
-                self.userDefaults.set(data, forKey: Property.runCommands.rawValue)
-            } catch {
-                Logger.config.error("Failed to encode run commands: \(error, privacy: .public)")
-            }
-        }
-    }
-    
     
     class func generateDeviceId() -> Device.Id {
         let uuid = UUID().uuidString
@@ -421,6 +402,7 @@ public class Configuration: ConnectionConfiguration, DeviceManagerConfiguration,
             return try CertificateUtils.getOrCreateIdentity(name, certCommonName: hostDeviceId, expirationInterval: expirationInterval)
         }
         catch {
+            Diagnostics.record("certificate.host_identity_failed", level: .error, fields: Diagnostics.errorFields(error))
             Logger.config.error("Failed to get host identity for SSL: \(error, privacy: .public)")
             return nil
         }
