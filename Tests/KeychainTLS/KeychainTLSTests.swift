@@ -18,7 +18,7 @@ private final class Counter: @unchecked Sendable {
 }
 
 /// Never sets a default keychain or searches the user's keychains.
-private final class TestKeychain {
+final class TestKeychain {
     let directory: URL
     let keychain: SecKeychain
     init() throws {
@@ -43,7 +43,7 @@ private final class TestKeychain {
     }
 }
 
-private struct Fixture {
+struct Fixture {
     let identity: SecIdentity
     let key: SecKey
     let certificate: NIOSSLCertificate

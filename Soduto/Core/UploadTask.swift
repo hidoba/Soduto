@@ -89,6 +89,7 @@ public class UploadTask {
     private var readBuffer = [UInt8](repeating: 0, count: UploadTask.maxBufferSize)
     private var listenTimeoutTask: Scheduled<Void>?
     private var isClosed: Bool = false
+    private var holdsPort: Bool = false
     private var trustHandler: PayloadTrustHandler?
     
     // MARK: Init / Deinit
@@ -157,6 +158,15 @@ public class UploadTask {
         self.serverChannel?.close(promise: nil)
         self.uploadChannel?.close(promise: nil)
         self.payload.close()
+        // Closing ends the upload however it stopped, including when its
+        // connection closes first; otherwise the port stays reserved for good.
+        self.releasePort()
+    }
+    
+    private func releasePort() {
+        guard holdsPort else { return }
+        holdsPort = false
+        PayloadPortRegistry.releasePort(self.listeningPort)
     }
     
     // MARK: Private - Server Setup
@@ -169,6 +179,7 @@ public class UploadTask {
                 try self.startServer(on: port)
                 self.listeningPort = port
                 PayloadPortRegistry.usePort(port)
+                self.holdsPort = true
                 return true
             } catch {
                 // Port binding failed, try next port
@@ -373,7 +384,7 @@ public class UploadTask {
         
         Logger.network.debug("uploadFinished(<\(success, privacy: .public)>)")
         
-        PayloadPortRegistry.releasePort(self.listeningPort)
+        self.releasePort()
         
         // Capture delegate before close() clears it
         let delegate = self.delegate

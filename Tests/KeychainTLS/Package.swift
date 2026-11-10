@@ -16,6 +16,9 @@ let package = Package(
         .target(name: "SodutoIdentity", dependencies: [
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
             .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOTLS", package: "swift-nio"),
+            .product(name: "NIOFoundationCompat", package: "swift-nio"),
             .product(name: "X509", package: "swift-certificates"),
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
